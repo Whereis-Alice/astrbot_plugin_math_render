@@ -1,0 +1,2 @@
+"""AstrBot math rendering plugin."""
+

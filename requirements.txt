@@ -1,0 +1,4 @@
+playwright>=1.50.0
+sympy>=1.13
+markdown>=3.6
+matplotlib>=3.8

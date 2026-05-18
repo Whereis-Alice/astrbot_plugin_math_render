@@ -348,6 +348,7 @@ class MathRenderPlugin(Star):
         markdown_content: str = "",
         geometry_scene_json: str = "",
         geometry_caption: str = "",
+        geometry_position: str = "",
     ):
         """Render a math answer into a high-quality image card and send it to the user.
 
@@ -362,6 +363,7 @@ class MathRenderPlugin(Star):
             markdown_content(string): Optional Markdown body used when free layout is desired. Supports headings, lists, emphasis, tables, and LaTeX math.
             geometry_scene_json(string): Optional geometry scene JSON string for triangles, circles, auxiliary lines, angle marks, and point-relation diagrams.
             geometry_caption(string): Optional caption shown below the geometry diagram.
+            geometry_position(string): Optional geometry placement hint such as `before_content`, `after_question`, `after_key_formula`, `before_answer`, `after_answer`, `after_steps`, `after_final_answer`, or `after_content`.
         """
         question = question.strip()
         answer = answer.strip()
@@ -370,6 +372,7 @@ class MathRenderPlugin(Star):
         markdown_content = markdown_content.strip()
         geometry_scene_json = geometry_scene_json.strip()
         geometry_caption = geometry_caption.strip()
+        geometry_position = geometry_position.strip()
 
         if not any([question, answer, key_formula, markdown_content, geometry_scene_json]):
             raise ValueError(
@@ -389,6 +392,7 @@ class MathRenderPlugin(Star):
             markdown_content=markdown_content,
             geometry_scene=self._parse_geometry_scene_json(geometry_scene_json),
             geometry_caption=geometry_caption,
+            geometry_position=geometry_position,
         )
         image_path = await self.renderer.render_solution_card(content)
         self._debug("llm tool render_math_solution_card sent image=%s", image_path)

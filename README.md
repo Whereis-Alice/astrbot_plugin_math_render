@@ -24,6 +24,8 @@
   - 文本里裸写 `\frac`、`\sqrt`、`\geq` 不显示
   - LLM 把换行写成字面量 `\n`
 - 几何题支持 `SymPy.geometry + Matplotlib + 场景 JSON`
+- 空几何场景会自动跳过，疑似被错误 viewport 裁空时会先去掉 viewport 再重画一次
+- LLM 或工具参数现在可以为每张解答图单独安排几何图位置
 - 临时文件统一放在插件专属目录，并支持自动清理
 - 支持输出 AstrBot 调试级别日志，方便排错
 
@@ -119,6 +121,12 @@
 3. 插件用 `SymPy.geometry` 处理几何对象/派生点
 4. 用 `Matplotlib` 生成 PNG
 5. 最终把几何图嵌进同一张解答卡片
+
+补充说明：
+
+- 如果场景 JSON 没有任何可见图元，插件会自动跳过几何图区块，不再塞入一张大白图
+- 如果几何图因为 `viewport` 设坏而看起来像空白图，插件会先去掉 `viewport` 自动重试一次
+- LLM 现在可以额外返回 `geometry_position`，把几何图放在内容前、题目后、公式后、解答后、步骤后、最终答案后或整卡片末尾
 
 ### 支持的几何场景元素
 
@@ -255,7 +263,11 @@ AstrBot/data/plugins/astrbot_plugin_math_render/temp
 - `geometry_solver_prompt_enabled`
 - `geometry_solver_prompt`
 - `geometry_section_enabled`
+- `geometry_position_mode`
 - `geometry_section_position`
+- `geometry_skip_blank_scene_enabled`
+- `geometry_skip_blank_image_enabled`
+- `geometry_retry_without_viewport_on_blank`
 - `geometry_section_label`
 - `geometry_caption_enabled`
 - `geometry_section_default_caption`

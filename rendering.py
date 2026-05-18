@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from PIL import Image as PILImage
+from PIL import Image as PILImage, ImageChops
 from PIL import UnidentifiedImageError
 
 from astrbot.api import html_renderer, logger
@@ -103,6 +103,7 @@ class SolutionCardContent:
     markdown_content: str = ""
     geometry_scene: dict[str, Any] | None = None
     geometry_caption: str = ""
+    geometry_position: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -826,7 +827,7 @@ SOLUTION_CARD_TEMPLATE = """<!DOCTYPE html>
       </div>
       <div class="section-grid">
         {% if free_layout_html %}
-          {% if geometry_image_data_uri and geometry_position == "before_answer" %}
+          {% if geometry_image_data_uri and geometry_position == "before_content" %}
           <section class="section geometry">
             <div class="label">{{ geometry_label }}</div>
             <div class="geometry-shell">
@@ -843,7 +844,7 @@ SOLUTION_CARD_TEMPLATE = """<!DOCTYPE html>
             <div class="label">内容</div>
             <div class="free-layout-body">{{ free_layout_html | safe }}</div>
           </section>
-          {% if geometry_image_data_uri and geometry_position != "before_answer" %}
+          {% if geometry_image_data_uri and geometry_position == "after_content" %}
           <section class="section geometry">
             <div class="label">{{ geometry_label }}</div>
             <div class="geometry-shell">
@@ -857,10 +858,36 @@ SOLUTION_CARD_TEMPLATE = """<!DOCTYPE html>
           </section>
           {% endif %}
         {% else %}
+          {% if geometry_image_data_uri and geometry_position == "before_content" %}
+          <section class="section geometry">
+            <div class="label">{{ geometry_label }}</div>
+            <div class="geometry-shell">
+              <div class="geometry-media">
+                <img src="{{ geometry_image_data_uri }}" alt="geometry diagram" />
+              </div>
+              {% if geometry_caption_html %}
+              <div class="geometry-caption">{{ geometry_caption_html | safe }}</div>
+              {% endif %}
+            </div>
+          </section>
+          {% endif %}
           {% if question_html %}
           <section class="section question">
             <div class="label">题目</div>
             <div class="body">{{ question_html | safe }}</div>
+          </section>
+          {% endif %}
+          {% if geometry_image_data_uri and geometry_position == "after_question" %}
+          <section class="section geometry">
+            <div class="label">{{ geometry_label }}</div>
+            <div class="geometry-shell">
+              <div class="geometry-media">
+                <img src="{{ geometry_image_data_uri }}" alt="geometry diagram" />
+              </div>
+              {% if geometry_caption_html %}
+              <div class="geometry-caption">{{ geometry_caption_html | safe }}</div>
+              {% endif %}
+            </div>
           </section>
           {% endif %}
           {% if key_formula %}
@@ -870,6 +897,19 @@ SOLUTION_CARD_TEMPLATE = """<!DOCTYPE html>
               \\[
               {{ key_formula }}
               \\]
+            </div>
+          </section>
+          {% endif %}
+          {% if geometry_image_data_uri and geometry_position == "after_key_formula" %}
+          <section class="section geometry">
+            <div class="label">{{ geometry_label }}</div>
+            <div class="geometry-shell">
+              <div class="geometry-media">
+                <img src="{{ geometry_image_data_uri }}" alt="geometry diagram" />
+              </div>
+              {% if geometry_caption_html %}
+              <div class="geometry-caption">{{ geometry_caption_html | safe }}</div>
+              {% endif %}
             </div>
           </section>
           {% endif %}
@@ -892,6 +932,19 @@ SOLUTION_CARD_TEMPLATE = """<!DOCTYPE html>
             <div class="body">{{ answer_html | safe }}</div>
           </section>
           {% endif %}
+          {% if geometry_image_data_uri and geometry_position == "after_answer" %}
+          <section class="section geometry">
+            <div class="label">{{ geometry_label }}</div>
+            <div class="geometry-shell">
+              <div class="geometry-media">
+                <img src="{{ geometry_image_data_uri }}" alt="geometry diagram" />
+              </div>
+              {% if geometry_caption_html %}
+              <div class="geometry-caption">{{ geometry_caption_html | safe }}</div>
+              {% endif %}
+            </div>
+          </section>
+          {% endif %}
           {% if steps_html %}
           <section class="section">
             <div class="label">步骤</div>
@@ -902,13 +955,39 @@ SOLUTION_CARD_TEMPLATE = """<!DOCTYPE html>
             </ol>
           </section>
           {% endif %}
+          {% if geometry_image_data_uri and geometry_position == "after_steps" %}
+          <section class="section geometry">
+            <div class="label">{{ geometry_label }}</div>
+            <div class="geometry-shell">
+              <div class="geometry-media">
+                <img src="{{ geometry_image_data_uri }}" alt="geometry diagram" />
+              </div>
+              {% if geometry_caption_html %}
+              <div class="geometry-caption">{{ geometry_caption_html | safe }}</div>
+              {% endif %}
+            </div>
+          </section>
+          {% endif %}
           {% if final_answer_html %}
           <section class="section final">
             <div class="label">最终答案</div>
             <div class="body">{{ final_answer_html | safe }}</div>
           </section>
           {% endif %}
-          {% if geometry_image_data_uri and geometry_position != "before_answer" %}
+          {% if geometry_image_data_uri and geometry_position == "after_final_answer" %}
+          <section class="section geometry">
+            <div class="label">{{ geometry_label }}</div>
+            <div class="geometry-shell">
+              <div class="geometry-media">
+                <img src="{{ geometry_image_data_uri }}" alt="geometry diagram" />
+              </div>
+              {% if geometry_caption_html %}
+              <div class="geometry-caption">{{ geometry_caption_html | safe }}</div>
+              {% endif %}
+            </div>
+          </section>
+          {% endif %}
+          {% if geometry_image_data_uri and geometry_position == "after_content" %}
           <section class="section geometry">
             <div class="label">{{ geometry_label }}</div>
             <div class="geometry-shell">
@@ -1095,32 +1174,31 @@ class MathRenderService:
         return await self._render_to_png(SOLUTION_CARD_TEMPLATE, payload, target_path)
 
     def _prepare_geometry_payload(self, content: SolutionCardContent) -> dict[str, Any]:
+        empty_payload = self._empty_geometry_payload(content)
         if not self._bool("geometry_render_enabled", True):
-            return {
-                "geometry_image_data_uri": "",
-                "geometry_caption_html": "",
-                "geometry_label": self._text("geometry_section_label", DEFAULT_GEOMETRY_LABEL),
-                "geometry_position": self._geometry_position(),
-            }
+            return empty_payload
         if not self._bool("geometry_section_enabled", True):
-            return {
-                "geometry_image_data_uri": "",
-                "geometry_caption_html": "",
-                "geometry_label": self._text("geometry_section_label", DEFAULT_GEOMETRY_LABEL),
-                "geometry_position": self._geometry_position(),
-            }
+            return empty_payload
 
         scene = content.geometry_scene
         if not scene:
-            return {
-                "geometry_image_data_uri": "",
-                "geometry_caption_html": "",
-                "geometry_label": self._text("geometry_section_label", DEFAULT_GEOMETRY_LABEL),
-                "geometry_position": self._geometry_position(),
-            }
+            return empty_payload
 
         try:
-            geometry_result = self._geometry_renderer.render_scene(scene)
+            parsed_scene = self._geometry_renderer.parse_scene(scene)
+            scene_description = self._geometry_renderer.describe_scene(parsed_scene)
+            self._debug("geometry scene parsed: %s", scene_description)
+
+            if self._bool("geometry_skip_blank_scene_enabled", True) and not self._geometry_renderer.has_drawable_content(
+                parsed_scene
+            ):
+                self._debug("geometry scene skipped because it has no drawable content: %s", scene_description)
+                return empty_payload
+
+            geometry_result = self._render_geometry_scene_with_fallback(parsed_scene, scene_description)
+            if geometry_result is None:
+                return empty_payload
+
             caption = (content.geometry_caption or "").strip() or geometry_result.caption
             return {
                 "geometry_image_data_uri": geometry_result.data_uri,
@@ -1128,20 +1206,159 @@ class MathRenderService:
                 if self._bool("geometry_caption_enabled", True)
                 else "",
                 "geometry_label": self._text("geometry_section_label", DEFAULT_GEOMETRY_LABEL),
-                "geometry_position": self._geometry_position(),
+                "geometry_position": empty_payload["geometry_position"],
             }
         except Exception as exc:
             logger.warning("math_render geometry render failed: %s", exc)
             self._debug("geometry render failed: %s", exc)
-            return {
-                "geometry_image_data_uri": "",
-                "geometry_caption_html": "",
-                "geometry_label": self._text("geometry_section_label", DEFAULT_GEOMETRY_LABEL),
-                "geometry_position": self._geometry_position(),
-            }
+            return empty_payload
 
-    def _geometry_position(self) -> str:
-        return "before_answer" if self._text("geometry_section_position", "before_answer").lower() == "before_answer" else "after_answer"
+    def _empty_geometry_payload(self, content: SolutionCardContent) -> dict[str, Any]:
+        return {
+            "geometry_image_data_uri": "",
+            "geometry_caption_html": "",
+            "geometry_label": self._text("geometry_section_label", DEFAULT_GEOMETRY_LABEL),
+            "geometry_position": self._resolve_geometry_position(content),
+        }
+
+    def _render_geometry_scene_with_fallback(
+        self,
+        scene: dict[str, Any],
+        scene_description: str,
+    ) -> Any | None:
+        geometry_result = self._geometry_renderer.render_scene(scene)
+        if self._geometry_image_has_visible_content(geometry_result.path):
+            return geometry_result
+
+        if self._bool("geometry_retry_without_viewport_on_blank", True) and scene.get("viewport"):
+            self._debug("geometry image appears blank; retrying without viewport: %s", scene_description)
+            fallback_scene = json.loads(json.dumps(scene, ensure_ascii=False))
+            fallback_scene["viewport"] = {}
+            geometry_result = self._geometry_renderer.render_scene(fallback_scene)
+            if self._geometry_image_has_visible_content(geometry_result.path):
+                return geometry_result
+
+        if self._bool("geometry_skip_blank_image_enabled", True):
+            self._debug("geometry image skipped because rendered output appears blank: %s", scene_description)
+            return None
+        return geometry_result
+
+    def _geometry_image_has_visible_content(self, image_path: Path) -> bool:
+        try:
+            with PILImage.open(image_path) as image:
+                rgba = image.convert("RGBA")
+                if rgba.getchannel("A").getbbox() is None:
+                    return False
+                if self._bool("geometry_transparent_background", True):
+                    return True
+                background = PILImage.new("RGBA", rgba.size, rgba.getpixel((0, 0)))
+                return ImageChops.difference(rgba, background).getbbox() is not None
+        except Exception as exc:
+            self._debug("geometry image inspection failed: %s", exc)
+            return True
+
+    def _resolve_geometry_position(self, content: SolutionCardContent) -> str:
+        layout_mode = self._resolve_layout_mode(content)
+        configured = self._normalize_geometry_position(
+            self._text("geometry_section_position", "before_answer"),
+            layout_mode,
+        )
+        requested = self._normalize_geometry_position(content.geometry_position, layout_mode)
+        mode = self._text("geometry_position_mode", "llm_or_tool").lower()
+        candidate = configured
+        if mode in {"llm_or_tool", "auto"} and requested:
+            candidate = requested
+        return self._coerce_geometry_position(candidate, content, layout_mode)
+
+    def _normalize_geometry_position(self, value: str, layout_mode: str) -> str:
+        candidate = (value or "").strip().lower()
+        aliases = {
+            "top": "before_content",
+            "bottom": "after_content",
+            "after_problem": "after_question",
+            "after_formula": "after_key_formula",
+            "before_solution": "before_answer",
+            "after_solution": "after_answer",
+            "after_final": "after_final_answer",
+        }
+        candidate = aliases.get(candidate, candidate)
+        valid_positions = {
+            "before_content",
+            "after_question",
+            "after_key_formula",
+            "before_answer",
+            "after_answer",
+            "after_steps",
+            "after_final_answer",
+            "after_content",
+        }
+        if candidate not in valid_positions:
+            return ""
+        if layout_mode == "free":
+            return "before_content" if candidate.startswith("before") else "after_content"
+        return candidate
+
+    def _coerce_geometry_position(self, candidate: str, content: SolutionCardContent, layout_mode: str) -> str:
+        if layout_mode == "free":
+            return candidate if candidate in {"before_content", "after_content"} else "before_content"
+
+        has_question = bool((content.question or "").strip())
+        has_formula = bool((content.key_formula or "").strip())
+        has_answer = bool((content.answer or "").strip())
+        has_steps = any(step and step.strip() for step in (content.steps or []))
+        has_final_answer = bool((content.final_answer or "").strip())
+
+        if candidate == "before_content":
+            return "before_content"
+        if candidate == "after_question":
+            if has_question:
+                return "after_question"
+            candidate = "after_key_formula"
+        if candidate == "after_key_formula":
+            if has_formula:
+                return "after_key_formula"
+            if has_question:
+                return "after_question"
+            candidate = "before_answer"
+        if candidate == "before_answer":
+            if has_answer:
+                return "before_answer"
+            if has_formula:
+                return "after_key_formula"
+            if has_question:
+                return "after_question"
+            if has_steps:
+                return "after_steps"
+            if has_final_answer:
+                return "after_final_answer"
+            return "after_content"
+        if candidate == "after_answer":
+            if has_answer:
+                return "after_answer"
+            if has_steps:
+                return "after_steps"
+            if has_final_answer:
+                return "after_final_answer"
+            return "after_content"
+        if candidate == "after_steps":
+            if has_steps:
+                return "after_steps"
+            if has_answer:
+                return "after_answer"
+            if has_final_answer:
+                return "after_final_answer"
+            return "after_content"
+        if candidate == "after_final_answer":
+            if has_final_answer:
+                return "after_final_answer"
+            if has_steps:
+                return "after_steps"
+            if has_answer:
+                return "after_answer"
+            return "after_content"
+        if candidate == "after_content":
+            return "after_content"
+        return "before_answer" if has_answer else "before_content"
 
     async def _before_render(self) -> None:
         if self._bool("cleanup_before_render", True):

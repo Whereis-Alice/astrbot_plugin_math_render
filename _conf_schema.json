@@ -77,12 +77,37 @@
     "default": true,
     "hint": "关闭后即使求解阶段生成了几何场景，也不会在最终图卡中展示。"
   },
+  "geometry_position_mode": {
+    "type": "string",
+    "description": "几何图位置决定方式",
+    "default": "llm_or_tool",
+    "options": ["fixed", "llm_or_tool"],
+    "hint": "fixed 表示始终使用固定位置；llm_or_tool 表示允许 LLM 或工具参数为每张图单独安排位置。"
+  },
   "geometry_section_position": {
     "type": "string",
     "description": "几何图在解答卡中的位置",
     "default": "before_answer",
-    "options": ["before_answer", "after_answer"],
+    "options": ["before_content", "after_question", "after_key_formula", "before_answer", "after_answer", "after_steps", "after_final_answer", "after_content"],
     "hint": "控制几何图显示在正文解答前还是后。"
+  },
+  "geometry_skip_blank_scene_enabled": {
+    "type": "bool",
+    "description": "空几何场景自动跳过",
+    "default": true,
+    "hint": "当 geometry_scene 里没有任何可见点、线、圆、角标或注释时，不嵌入几何图区块。"
+  },
+  "geometry_skip_blank_image_enabled": {
+    "type": "bool",
+    "description": "空白几何图自动跳过",
+    "default": true,
+    "hint": "当几何图最终渲染结果看起来是空白图片时，自动不显示该区块。"
+  },
+  "geometry_retry_without_viewport_on_blank": {
+    "type": "bool",
+    "description": "空白几何图时自动去掉 viewport 重试",
+    "default": true,
+    "hint": "如果 LLM 给出的 viewport 把图裁丢了，会先去掉 viewport 再重画一次。"
   },
   "geometry_section_label": {
     "type": "string",

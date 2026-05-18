@@ -101,6 +101,8 @@ class GeometryRenderer:
 
     def render_scene(self, scene_input: str | dict[str, Any]) -> GeometryRenderResult:
         scene = self.parse_scene(scene_input)
+        if self._bool("geometry_skip_blank_scene_enabled", True) and not self.has_drawable_content(scene):
+            raise GeometrySceneError("geometry scene has no drawable elements")
         cache_key = self._make_cache_key(scene)
         target_path = self._temp_dir / f"geometry_{cache_key}.png"
         if self._bool("enable_cache", True) and target_path.exists():
@@ -152,6 +154,45 @@ class GeometryRenderer:
             raise GeometrySceneError("`viewport` must be an object when provided")
         normalized["viewport"] = viewport
         return normalized
+
+    def has_drawable_content(self, scene_input: str | dict[str, Any]) -> bool:
+        summary = self.scene_summary(scene_input)
+        return bool(summary["visible_points"] or summary["drawable_objects"])
+
+    def scene_summary(self, scene_input: str | dict[str, Any]) -> dict[str, int]:
+        scene = scene_input if isinstance(scene_input, dict) else self.parse_scene(scene_input)
+        normalized = self.parse_scene(scene)
+        visible_points = 0
+        for entry in normalized.get("points", []):
+            if not isinstance(entry, dict):
+                continue
+            if bool(entry.get("show", True)) or bool(entry.get("show_label", True)):
+                visible_points += 1
+
+        drawable_objects = sum(
+            len(normalized.get(key, []))
+            for key in ("segments", "lines", "rays", "circles", "polygons", "angle_marks", "annotations")
+        )
+        return {
+            "points": len(normalized.get("points", [])),
+            "visible_points": visible_points,
+            "segments": len(normalized.get("segments", [])),
+            "lines": len(normalized.get("lines", [])),
+            "rays": len(normalized.get("rays", [])),
+            "circles": len(normalized.get("circles", [])),
+            "polygons": len(normalized.get("polygons", [])),
+            "angle_marks": len(normalized.get("angle_marks", [])),
+            "annotations": len(normalized.get("annotations", [])),
+            "drawable_objects": drawable_objects,
+        }
+
+    def describe_scene(self, scene_input: str | dict[str, Any]) -> str:
+        summary = self.scene_summary(scene_input)
+        return (
+            "points={points} visible_points={visible_points} segments={segments} lines={lines} "
+            "rays={rays} circles={circles} polygons={polygons} angle_marks={angle_marks} "
+            "annotations={annotations} drawable_objects={drawable_objects}"
+        ).format(**summary)
 
     def _build_scene(self, scene: dict[str, Any]) -> dict[str, Any]:
         points: dict[str, SymPoint] = {}

@@ -13,7 +13,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-from matplotlib import font_manager, pyplot as plt
+from matplotlib import font_manager, patheffects, pyplot as plt
 from matplotlib.patches import Arc, Circle as MplCircle, Polygon as MplPolygon
 from sympy.geometry import Circle as SymCircle
 from sympy.geometry import Line as SymLine
@@ -181,11 +181,46 @@ class GeometryRenderer:
                 normalizer(entry)
                 for entry in value
             ]
+        self._coerce_misplaced_line_entries(normalized)
         self._maybe_flip_screen_coordinates(normalized)
         self._rebuild_semicircle_geometry(normalized)
         self._infer_compact_circle_types(normalized)
         self._merge_point_label_annotations(normalized)
         return normalized
+
+    def _coerce_misplaced_line_entries(self, scene: dict[str, Any]) -> None:
+        lines = scene.get("lines")
+        if not isinstance(lines, list):
+            return
+
+        segments = scene.get("segments")
+        if not isinstance(segments, list):
+            segments = []
+            scene["segments"] = segments
+
+        kept_lines: list[Any] = []
+        moved = 0
+        for entry in lines:
+            if not isinstance(entry, dict):
+                kept_lines.append(entry)
+                continue
+
+            through = entry.get("through")
+            from_name = self._text_from(entry.get("from"))
+            to_name = self._text_from(entry.get("to"))
+            if isinstance(through, list):
+                kept_lines.append(entry)
+                continue
+            if not from_name or not to_name:
+                kept_lines.append(entry)
+                continue
+
+            segments.append(self._normalize_segment_aliases(entry))
+            moved += 1
+
+        if moved:
+            scene["lines"] = kept_lines
+            self._debug("geometry coerced misplaced lines into segments: moved=%s", moved)
 
     def _label_position_value(self, entry: dict[str, Any]) -> str:
         return (
@@ -194,13 +229,16 @@ class GeometryRenderer:
             or self._text_from(entry.get("label_position_name"))
         )
 
+    def _label_position_key(self, value: Any) -> str:
+        return re.sub(r"[^a-z]", "", self._text_from(value).lower())
+
     def _offset_from_label_position(
         self,
         value: Any,
         *,
         default: tuple[float, float],
     ) -> list[float] | None:
-        position = re.sub(r"[^a-z]", "", self._text_from(value).lower())
+        position = self._label_position_key(value)
         if not position:
             return None
 
@@ -230,6 +268,81 @@ class GeometryRenderer:
             float(direction[0]) * base * diagonal_scale,
             float(direction[1]) * base * diagonal_scale,
         ]
+
+    def _offset_points_from_label_position(self, value: Any, *, distance: float = 8.0) -> list[float] | None:
+        position = self._label_position_key(value)
+        if not position:
+            return None
+
+        alias_map = {
+            "north": (0, 1),
+            "south": (0, -1),
+            "east": (1, 0),
+            "west": (-1, 0),
+            "northeast": (1, 1),
+            "northwest": (-1, 1),
+            "southeast": (1, -1),
+            "southwest": (-1, -1),
+            "above": (0, 1),
+            "below": (0, -1),
+            "left": (-1, 0),
+            "right": (1, 0),
+            "center": (0, 0),
+            "middle": (0, 0),
+        }
+        direction = alias_map.get(position)
+        if direction is None:
+            return None
+
+        diagonal_scale = 0.9 if abs(direction[0]) and abs(direction[1]) else 1.0
+        return [
+            float(direction[0]) * distance * diagonal_scale,
+            float(direction[1]) * distance * diagonal_scale,
+        ]
+
+    def _alignment_from_label_position(self, value: Any) -> tuple[str, str] | None:
+        position = self._label_position_key(value)
+        if not position:
+            return None
+
+        alignment_map = {
+            "north": ("center", "bottom"),
+            "south": ("center", "top"),
+            "east": ("left", "center"),
+            "west": ("right", "center"),
+            "northeast": ("left", "bottom"),
+            "northwest": ("right", "bottom"),
+            "southeast": ("left", "top"),
+            "southwest": ("right", "top"),
+            "above": ("center", "bottom"),
+            "below": ("center", "top"),
+            "left": ("right", "center"),
+            "right": ("left", "center"),
+            "center": ("center", "center"),
+            "middle": ("center", "center"),
+        }
+        return alignment_map.get(position)
+
+    def _apply_label_position_defaults(
+        self,
+        normalized: dict[str, Any],
+        *,
+        distance_points: float,
+    ) -> None:
+        position = self._label_position_value(normalized)
+        if not position:
+            return
+
+        if "offset_points" not in normalized:
+            offset_points = self._offset_points_from_label_position(position, distance=distance_points)
+            if offset_points is not None:
+                normalized["offset_points"] = offset_points
+
+        if "ha" not in normalized or "va" not in normalized:
+            alignment = self._alignment_from_label_position(position)
+            if alignment is not None:
+                normalized.setdefault("ha", alignment[0])
+                normalized.setdefault("va", alignment[1])
 
     def _rebuild_semicircle_geometry(self, scene: dict[str, Any]) -> None:
         points = scene.get("points")
@@ -775,13 +888,7 @@ class GeometryRenderer:
             normalized["style"] = "highlight"
         if "label" in normalized and not self._text_from(normalized.get("label")) and "show_label" not in normalized:
             normalized["show_label"] = False
-        if "offset" not in normalized:
-            offset = self._offset_from_label_position(
-                self._label_position_value(normalized),
-                default=(0.12, 0.12),
-            )
-            if offset is not None:
-                normalized["offset"] = offset
+        self._apply_label_position_defaults(normalized, distance_points=10.0)
         return normalized
 
     def _normalize_segment_aliases(self, entry: Any) -> dict[str, Any] | Any:
@@ -824,13 +931,7 @@ class GeometryRenderer:
                 normalized["label_pos"] = float(normalized.get("labelPos"))
             except (TypeError, ValueError):
                 pass
-        if "offset" not in normalized:
-            offset = self._offset_from_label_position(
-                self._label_position_value(normalized),
-                default=(0.0, 0.16),
-            )
-            if offset is not None:
-                normalized["offset"] = offset
+        self._apply_label_position_defaults(normalized, distance_points=7.0)
         normalized["style"] = self._normalize_style_alias_value(normalized.get("style"))
         return normalized
 
@@ -1652,6 +1753,9 @@ class GeometryRenderer:
                     "show": bool(entry.get("show", True)),
                     "show_label": bool(entry.get("show_label", False if has_label_key and not label_text else True)),
                     "offset": self._pair(entry.get("offset"), default=(0.12, 0.12)),
+                    "offset_points": self._pair(entry.get("offset_points"), default=(0.0, 0.0)),
+                    "ha": self._text_from(entry.get("ha")) or "left",
+                    "va": self._text_from(entry.get("va")) or "bottom",
                     "style": self._style_name(entry.get("style"), default="primary"),
                 }
             except Exception as exc:
@@ -1809,11 +1913,23 @@ class GeometryRenderer:
                 )
                 label = self._text_from(entry.get("label"))
                 if label:
+                    has_explicit_label_pos = entry.get("label_pos") is not None
                     try:
                         label_pos = float(entry.get("label_pos", 0.5))
                     except (TypeError, ValueError):
                         label_pos = 0.5
                     label_pos = min(max(label_pos, 0.0), 1.0)
+                    if not has_explicit_label_pos:
+                        label_pos = self._auto_segment_label_pos(
+                            label_pos,
+                            p1,
+                            p2,
+                            points,
+                            exclude_names={
+                                self._text_from(entry.get("from")),
+                                self._text_from(entry.get("to")),
+                            },
+                        )
                     midpoint = (
                         float(p1.x) + (float(p2.x) - float(p1.x)) * label_pos,
                         float(p1.y) + (float(p2.y) - float(p1.y)) * label_pos,
@@ -1824,11 +1940,44 @@ class GeometryRenderer:
                         midpoint[0],
                         midpoint[1],
                         offset=self._pair(entry.get("offset"), default=(0.0, 0.16)),
+                        offset_points=self._pair(entry.get("offset_points"), default=(0.0, 0.0)),
                         color=style["color"],
                         font_size=self._int("geometry_annotation_font_size", 11),
+                        ha=self._text_from(entry.get("ha")) or "center",
+                        va=self._text_from(entry.get("va")) or "center",
+                        zorder=8.6,
                     )
             except Exception as exc:
                 self._debug("geometry segment skipped entry=%r error=%s", entry, exc)
+
+    def _auto_segment_label_pos(
+        self,
+        label_pos: float,
+        p1: SymPoint,
+        p2: SymPoint,
+        points: dict[str, SymPoint],
+        *,
+        exclude_names: set[str],
+    ) -> float:
+        if abs(label_pos - 0.5) > 1e-9:
+            return label_pos
+
+        dx = float(p2.x - p1.x)
+        dy = float(p2.y - p1.y)
+        length = math.hypot(dx, dy)
+        if length <= 1e-9:
+            return label_pos
+
+        midpoint_x = float(p1.x) + dx * label_pos
+        midpoint_y = float(p1.y) + dy * label_pos
+        collision_threshold = max(length * 0.045, 0.55)
+        for name, point in points.items():
+            if name in exclude_names:
+                continue
+            distance = math.hypot(float(point.x) - midpoint_x, float(point.y) - midpoint_y)
+            if distance <= collision_threshold:
+                return 0.62
+        return label_pos
 
     def _draw_lines(self, ax: Any, scene: dict[str, Any], points: dict[str, SymPoint], bounds: tuple[float, float, float, float]) -> None:
         span = max(bounds[1] - bounds[0], bounds[3] - bounds[2], 1.0) * 2.2
@@ -1942,8 +2091,12 @@ class GeometryRenderer:
                         label_anchor[0],
                         label_anchor[1],
                         offset=label_offset,
+                        offset_points=self._pair(entry.get("offset_points"), default=(0.0, 0.0)),
                         color=style["color"],
                         font_size=self._int("geometry_annotation_font_size", 11),
+                        ha=self._text_from(entry.get("ha")) or "left",
+                        va=self._text_from(entry.get("va")) or "bottom",
+                        zorder=8.6,
                     )
             except Exception as exc:
                 self._debug("geometry circle skipped entry=%r error=%s", entry, exc)
@@ -2030,8 +2183,12 @@ class GeometryRenderer:
                         x,
                         y,
                         offset=(0.0, 0.0),
+                        offset_points=self._pair(entry.get("offset_points"), default=(0.0, 0.0)),
                         color=style["color"],
                         font_size=self._int("geometry_annotation_font_size", 11),
+                        ha=self._text_from(entry.get("ha")) or "center",
+                        va=self._text_from(entry.get("va")) or "center",
+                        zorder=8.8,
                     )
             except Exception as exc:
                 self._debug("geometry angle mark skipped entry=%r error=%s", entry, exc)
@@ -2082,8 +2239,12 @@ class GeometryRenderer:
                         x,
                         y,
                         offset=self._pair(meta.get("offset"), default=(0.12, 0.12)),
+                        offset_points=self._pair(meta.get("offset_points"), default=(0.0, 0.0)),
                         color=self._text("geometry_text_color", "#0F172A") or "#0F172A",
                         font_size=label_size,
+                        ha=self._text_from(meta.get("ha")) or "left",
+                        va=self._text_from(meta.get("va")) or "bottom",
+                        zorder=8.0,
                     )
             except Exception as exc:
                 self._debug("geometry point draw skipped name=%s meta=%r error=%s", name, meta, exc)
@@ -2112,8 +2273,12 @@ class GeometryRenderer:
                     x,
                     y,
                     offset=offset,
+                    offset_points=self._pair(entry.get("offset_points"), default=(0.0, 0.0)),
                     color=self._text_from(entry.get("color")) or default_color,
                     font_size=font_size,
+                    ha=self._text_from(entry.get("ha")) or "left",
+                    va=self._text_from(entry.get("va")) or "bottom",
+                    zorder=8.7,
                 )
             except Exception as exc:
                 self._debug("geometry annotation skipped entry=%r error=%s", entry, exc)
@@ -2126,25 +2291,31 @@ class GeometryRenderer:
         y: float,
         *,
         offset: tuple[float, float],
+        offset_points: tuple[float, float],
         color: str,
         font_size: int,
+        ha: str,
+        va: str,
+        zorder: float = 8.0,
     ) -> None:
         label = self._normalize_plot_text(text)
-        ax.text(
-            x + offset[0],
-            y + offset[1],
+        stroke_width = max(font_size * 0.18, 1.9)
+        path_effect_list = [
+            patheffects.withStroke(linewidth=stroke_width, foreground=(1, 1, 1, 0.88)),
+        ]
+        ax.annotate(
             label,
+            xy=(x + offset[0], y + offset[1]),
+            xytext=offset_points,
+            textcoords="offset points",
             fontsize=font_size,
             fontfamily=self._font_families(),
             color=color,
-            ha="left",
-            va="bottom",
-            zorder=8,
-            bbox={
-                "boxstyle": "round,pad=0.16",
-                "fc": (1, 1, 1, 0.64),
-                "ec": "none",
-            },
+            ha=ha,
+            va=va,
+            zorder=zorder,
+            path_effects=path_effect_list,
+            annotation_clip=False,
         )
 
     def _normalize_plot_text(self, text: str) -> str:

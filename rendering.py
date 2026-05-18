@@ -1414,6 +1414,7 @@ class MathRenderService:
         dpi_scale = max(self._float("render_dpi_scale", 1.0), 0.5)
         device_scale_factor = max(base_scale * dpi_scale, 1.0)
         selector = "#capture-root[data-ready]"
+        wait_until = self._preferred_render_wait_until()
 
         launch_kwargs: dict[str, Any] = {"headless": True}
         if executable:
@@ -1426,7 +1427,14 @@ class MathRenderService:
             browser = await playwright.chromium.launch(**launch_kwargs)
             try:
                 page = await browser.new_page(viewport=viewport, device_scale_factor=device_scale_factor)
-                await page.set_content(rendered_html, wait_until="networkidle")
+                page.set_default_timeout(timeout)
+                page.set_default_navigation_timeout(timeout)
+                await self._set_page_content_with_fallback(
+                    page,
+                    rendered_html,
+                    timeout=timeout,
+                    preferred_wait_until=wait_until,
+                )
                 locator = page.locator(selector)
                 await locator.wait_for(timeout=timeout)
                 await locator.screenshot(path=str(target_path), type="png")
@@ -1441,7 +1449,7 @@ class MathRenderService:
                 "height": self._int("viewport_height", 2200),
             },
             "selector": "#capture-root[data-ready]",
-            "wait_until": "networkidle",
+            "wait_until": self._preferred_render_wait_until(),
             "timeout": self._int("render_timeout_ms", DEFAULT_RENDER_TIMEOUT_MS),
             "type": "png",
             "full_page": False,
@@ -1475,6 +1483,53 @@ class MathRenderService:
         finally:
             source.unlink(missing_ok=True)
         return target
+
+    async def _set_page_content_with_fallback(
+        self,
+        page: Any,
+        rendered_html: str,
+        *,
+        timeout: int,
+        preferred_wait_until: str,
+    ) -> str:
+        last_error: Exception | None = None
+        for wait_until in self._render_wait_until_candidates(preferred_wait_until):
+            try:
+                await page.set_content(rendered_html, wait_until=wait_until, timeout=timeout)
+                if wait_until != preferred_wait_until:
+                    self._debug(
+                        "local browser set_content fallback succeeded wait_until=%s preferred=%s timeout=%s",
+                        wait_until,
+                        preferred_wait_until,
+                        timeout,
+                    )
+                return wait_until
+            except Exception as exc:
+                last_error = exc
+                self._debug(
+                    "local browser set_content failed wait_until=%s timeout=%s error=%s",
+                    wait_until,
+                    timeout,
+                    exc,
+                )
+        if last_error is not None:
+            raise last_error
+        raise RuntimeError("no wait strategy available for local browser rendering")
+
+    def _preferred_render_wait_until(self) -> str:
+        value = self._text("render_wait_until", "networkidle").lower()
+        allowed = {"networkidle", "load", "domcontentloaded"}
+        if value not in allowed:
+            return "networkidle"
+        return value
+
+    def _render_wait_until_candidates(self, preferred: str) -> list[str]:
+        candidates = [preferred, "load", "domcontentloaded", "networkidle"]
+        deduped: list[str] = []
+        for value in candidates:
+            if value not in deduped:
+                deduped.append(value)
+        return deduped
 
     def _theme_context(self, theme: ThemePalette) -> dict[str, str]:
         return {

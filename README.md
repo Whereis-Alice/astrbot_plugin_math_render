@@ -305,6 +305,9 @@ AstrBot/data/plugins/astrbot_plugin_math_render/temp
 
 - `default_style`
 - `default_accent_color`
+- `render_timeout_ms`
+- `render_wait_until`
+- `device_scale_factor`
 - `render_dpi_scale`
 - `title_font_size_px`
 - `subtitle_font_size_px`
@@ -316,6 +319,8 @@ AstrBot/data/plugins/astrbot_plugin_math_render/temp
 - `render_page_background_css`
 - `render_card_background_css`
 - `content_max_width_px`
+
+如果本地浏览器截图偶尔卡在等待阶段，可以把 `render_wait_until` 从默认的 `networkidle` 调成 `load`；插件本地后端也会在超时时自动尝试更宽松的等待策略。
 
 ## 依赖
 

@@ -101,10 +101,35 @@ class GeometryAliasCompatibilityTests(unittest.TestCase):
         }
 
         normalized = self.renderer.parse_scene(scene)
-        point_offsets = [entry.get("offset") for entry in normalized["points"]]
+        point_offsets = [entry.get("offset_points") for entry in normalized["points"]]
 
         self.assertTrue(all(offset for offset in point_offsets))
-        self.assertEqual(normalized["segments"][0]["offset"][1] > 0, True)
+        self.assertEqual(normalized["points"][0]["ha"], "right")
+        self.assertEqual(normalized["points"][0]["va"], "top")
+        self.assertEqual(normalized["segments"][0]["offset_points"][1] > 0, True)
+        self.assertEqual(normalized["segments"][0]["ha"], "center")
+        self.assertEqual(normalized["segments"][0]["va"], "bottom")
+
+    def test_lines_with_from_to_are_coerced_to_segments(self) -> None:
+        scene = {
+            "points": [
+                {"id": "A", "x": 0, "y": 0},
+                {"id": "B", "x": 6, "y": 0},
+                {"id": "D", "x": 3, "y": 4},
+            ],
+            "lines": [
+                {"from": "A", "to": "D"},
+                {"from": "D", "to": "B", "style": "dashed"},
+            ],
+        }
+
+        normalized = self.renderer.parse_scene(scene)
+
+        self.assertEqual(len(normalized["lines"]), 0)
+        self.assertEqual(len(normalized["segments"]), 2)
+        self.assertEqual(normalized["segments"][0]["from"], "A")
+        self.assertEqual(normalized["segments"][0]["to"], "D")
+        self.assertEqual(normalized["segments"][1]["style"], "auxiliary")
 
 
 if __name__ == "__main__":

@@ -1,8 +1,31 @@
 # Changelog
 
+## [v0.3.9] - 2026-05-18
+
+### Changed
+
+- 优化几何点标注的落位与层级，`C`、`O` 这类点名会离拥挤的底边文字更远一些，描边也更轻，减少遮挡感。
+- 新增 `render_wait_until` 配置项；本地浏览器截图现在会在 `networkidle` 超时时自动回退到 `load` / `domcontentloaded`，预览和长内容渲染更稳。
+
+### Fixed
+
+- 去掉几何标注原先那层半透明白色圆角背景，改成更自然的描边文字。
+- 修复本地浏览器在 `page.set_content(...)` 阶段没有正确吃到 `render_timeout_ms`、容易卡在 Playwright 默认 30 秒超时的问题。
+
 本文件记录 `astrbot_plugin_math_render` 的重要更新。
 
 版本号与 `metadata.yaml` 保持一致，后续发版可继续在顶部追加。
+
+## [v0.3.8] - 2026-05-18
+
+### Changed
+
+- 几何 scene 提示进一步明确：有限边如 `AD`、`BD`、`OD` 应放进 `segments`，无限直线才使用 `lines.through`；半圆则应显式使用 `semicircle_*` 或 `semicircle + orientation`。
+
+### Fixed
+
+- 修复部分 LLM 把有限线段错误塞进 `lines` 集合时，被当成无效直线并在日志里报 `line through must contain exactly two point names` 的问题。
+- 这类误放进 `lines` 的 `from/to` 图元现在会自动转入 `segments`，避免 `AD`、`BD`、`OD` 一类关键边直接丢失。
 
 ## [v0.3.7] - 2026-05-18
 

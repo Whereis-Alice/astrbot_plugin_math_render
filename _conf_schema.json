@@ -326,6 +326,12 @@
     "description": "单次渲染超时（毫秒）",
     "default": 45000
   },
+  "render_wait_until": {
+    "type": "string",
+    "description": "HTML 渲染等待策略",
+    "default": "networkidle",
+    "hint": "可选 `networkidle`、`load`、`domcontentloaded`。如果本地截图经常卡在等待阶段，可以改成 `load`；本地浏览器后端也会自动回退到更宽松策略。"
+  },
   "viewport_width": {
     "type": "int",
     "description": "渲染视口宽度",

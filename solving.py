@@ -65,6 +65,9 @@ def build_solver_prompt(
         parts.append(
             "Canonical geometry schema reminder: prefer point `name`, segment/angle `from` + `to`, circle `orientation`, and numeric `offset` for label placement. Avoid ad-hoc field names when a standard field already exists."
         )
+        parts.append(
+            "Use `segments` for finite edges such as AD, BD, OD, and reserve `lines` for infinite straight lines with `through`. If the figure is a semicircle, declare it explicitly with `semicircle` + `orientation` or a `semicircle_*` type instead of a full circle."
+        )
     parts.append(f"题目：{question.strip()}")
     return "\n\n".join(part for part in parts if part.strip())
 

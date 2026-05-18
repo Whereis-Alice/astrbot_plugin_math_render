@@ -717,6 +717,9 @@ class GeometryRenderer:
                 return (float(value[0]), float(value[1]))
             except (TypeError, ValueError):
                 return None
+        inline_coords = self._inline_coords_from_text(value)
+        if inline_coords is not None:
+            return inline_coords
         name = self._text_from(value)
         return point_map.get(name)
 
@@ -1158,9 +1161,22 @@ class GeometryRenderer:
             if label:
                 normalized["text"] = label
 
-        at_name = self._text_from(normalized.get("at"))
+        at_value = normalized.get("at")
+        at_coords = self._point_coords_from_value(at_value, {})
+        if at_coords is not None:
+            normalized["x"] = at_coords[0]
+            normalized["y"] = at_coords[1]
+            normalized.pop("at", None)
+            return normalized
+
+        at_name = self._text_from(at_value)
         point_value = normalized.get("point")
         if not at_name and isinstance(point_value, str):
+            point_coords = self._point_coords_from_value(point_value, {})
+            if point_coords is not None:
+                normalized["x"] = point_coords[0]
+                normalized["y"] = point_coords[1]
+                return normalized
             at_name = self._text_from(point_value)
         if at_name:
             normalized["at"] = at_name
@@ -2547,12 +2563,34 @@ class GeometryRenderer:
             except (TypeError, ValueError):
                 pass
 
+        inline_coords = self._inline_coords_from_text(value)
+        if inline_coords is not None:
+            return SymPoint(inline_coords[0], inline_coords[1])
+
         name = self._text_from(value)
         if not name:
             raise GeometrySceneError(f"{context} point reference is empty")
         if name not in points:
             raise GeometrySceneError(f"{context} references unknown point `{name}`")
         return points[name]
+
+    def _inline_coords_from_text(self, value: Any) -> tuple[float, float] | None:
+        if not isinstance(value, str):
+            return None
+        candidate = value.strip()
+        if not candidate:
+            return None
+        match = re.fullmatch(
+            r"[\(\[]?\s*([-+]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)\s*[,，]\s*"
+            r"([-+]?(?:\d+(?:\.\d+)?|\.\d+)(?:[eE][-+]?\d+)?)\s*[\)\]]?",
+            candidate,
+        )
+        if not match:
+            return None
+        try:
+            return (float(match.group(1)), float(match.group(2)))
+        except (TypeError, ValueError):
+            return None
 
     def _pair(self, value: Any, *, default: tuple[float, float]) -> tuple[float, float]:
         if isinstance(value, list) and len(value) == 2:

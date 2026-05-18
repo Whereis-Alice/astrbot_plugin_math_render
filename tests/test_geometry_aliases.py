@@ -131,6 +131,53 @@ class GeometryAliasCompatibilityTests(unittest.TestCase):
         self.assertEqual(normalized["segments"][0]["to"], "D")
         self.assertEqual(normalized["segments"][1]["style"], "auxiliary")
 
+    def test_annotation_at_string_coordinates_are_normalized_and_merged(self) -> None:
+        scene = {
+            "points": [
+                {"name": "A", "x": -50, "y": 0},
+                {"name": "B", "x": 50, "y": 0},
+                {"name": "O", "x": 0, "y": 0},
+                {"name": "C", "x": -15, "y": 0},
+                {"name": "D", "x": -15, "y": 47},
+            ],
+            "segments": [
+                {"from": "A", "to": "B"},
+                {"from": "A", "to": "D"},
+                {"from": "B", "to": "D"},
+                {"from": "C", "to": "D"},
+                {"from": "O", "to": "D"},
+            ],
+            "circles": [
+                {"center": "O", "radius": 50, "semicircle": True, "orientation": "upper"},
+            ],
+            "angle_marks": [
+                {"vertex": "D", "from": "A", "to": "B", "label": "90°"},
+            ],
+            "annotations": [
+                {"text": "a", "at": "(-32, -8)"},
+                {"text": "b", "at": "(17, -8)"},
+                {"text": "C", "at": "(-15, -8)"},
+                {"text": "O", "at": "(0, -8)"},
+                {"text": "R = (a+b)/2", "at": "(25, 35)"},
+                {"text": "CD = √(ab)", "at": "(-30, 25)"},
+            ],
+        }
+
+        normalized = self.renderer.parse_scene(scene)
+        point_map = {entry["name"]: entry for entry in normalized["points"]}
+
+        self.assertEqual(point_map["C"]["label"], "C")
+        self.assertEqual(point_map["C"]["offset"], [0.0, -8.0])
+        self.assertEqual(point_map["O"]["label"], "O")
+        self.assertEqual(point_map["O"]["offset"], [0.0, -8.0])
+        self.assertEqual(len(normalized["annotations"]), 4)
+        self.assertEqual(normalized["annotations"][0]["x"], -32.0)
+        self.assertEqual(normalized["annotations"][0]["y"], -8.0)
+
+        result = self.renderer.render_scene(scene)
+        self.assertTrue(result.path.exists())
+        self.assertGreater(result.path.stat().st_size, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

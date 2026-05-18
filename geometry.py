@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -139,6 +140,9 @@ class GeometryRenderer:
         if not isinstance(scene, dict):
             raise GeometrySceneError("geometry scene must be a JSON object")
 
+        if self._looks_like_legacy_scene(scene):
+            scene = self._normalize_legacy_scene(scene)
+
         normalized = dict(scene)
         for key in ("points", "segments", "lines", "rays", "circles", "polygons", "angle_marks", "annotations"):
             value = normalized.get(key, [])
@@ -154,6 +158,489 @@ class GeometryRenderer:
             raise GeometrySceneError("`viewport` must be an object when provided")
         normalized["viewport"] = viewport
         return normalized
+
+    def _looks_like_legacy_scene(self, scene: dict[str, Any]) -> bool:
+        return isinstance(scene.get("setup"), list)
+
+    def _normalize_legacy_scene(self, scene: dict[str, Any]) -> dict[str, Any]:
+        normalized: dict[str, Any] = {
+            "caption": self._text_from(scene.get("caption")),
+            "viewport": {},
+            "points": [],
+            "segments": [],
+            "lines": [],
+            "rays": [],
+            "circles": [],
+            "polygons": [],
+            "angle_marks": [],
+            "annotations": [],
+        }
+        point_entries: dict[str, dict[str, Any]] = {}
+        point_order: list[str] = []
+        point_objects: dict[str, SymPoint] = {}
+        line_defs: dict[str, tuple[str, str]] = {}
+        circle_defs: dict[str, SymCircle] = {}
+        semicircle_defs: dict[str, dict[str, Any]] = {}
+
+        def store_point(
+            name: str,
+            point: SymPoint,
+            *,
+            show: bool = True,
+            show_label: bool = True,
+            label: str = "",
+            offset: tuple[float, float] | None = None,
+            style: str = "primary",
+        ) -> None:
+            point_objects[name] = point
+            existing = point_entries.get(name)
+            if existing is None:
+                existing = {
+                    "name": name,
+                    "label": label or name,
+                    "show": show,
+                    "show_label": show_label,
+                    "style": style,
+                }
+                point_entries[name] = existing
+                point_order.append(name)
+            else:
+                existing["label"] = label or existing.get("label") or name
+                existing["show"] = bool(existing.get("show", False) or show)
+                existing["show_label"] = bool(existing.get("show_label", False) or show_label)
+                existing["style"] = style or existing.get("style", "primary")
+            existing["x"] = float(point.x)
+            existing["y"] = float(point.y)
+            if offset is not None:
+                existing["offset"] = [float(offset[0]), float(offset[1])]
+
+        for raw_entry in scene.get("setup", []):
+            if not isinstance(raw_entry, list) or len(raw_entry) < 2:
+                continue
+            op_name = self._text_from(raw_entry[0]).lower()
+            payload = raw_entry[1]
+            try:
+                if op_name == "point" and isinstance(payload, list) and len(payload) >= 3:
+                    name = self._text_from(payload[0])
+                    point = SymPoint(float(payload[1]), float(payload[2]))
+                    store_point(name, point)
+                    continue
+
+                if op_name == "midpoint" and isinstance(payload, list) and len(payload) >= 3:
+                    name = self._text_from(payload[0])
+                    p1, p2 = self._legacy_pair_from_names(payload[1], payload[2], point_objects)
+                    point = SymSegment(p1, p2).midpoint
+                    store_point(name, point)
+                    continue
+
+                if op_name == "circle" and isinstance(payload, list) and len(payload) >= 3:
+                    circle_name = self._text_from(payload[0])
+                    center_name = self._text_from(payload[1])
+                    through_name = self._text_from(payload[2])
+                    center = self._legacy_point_by_name(center_name, point_objects)
+                    through = self._legacy_point_by_name(through_name, point_objects)
+                    circle_defs[circle_name] = SymCircle(center, center.distance(through))
+                    if not circle_name.lower().startswith("circle"):
+                        normalized["circles"].append(
+                            {
+                                "center": center_name,
+                                "through": through_name,
+                                "style": "subtle",
+                            }
+                        )
+                    continue
+
+                if op_name == "semicircle" and isinstance(payload, list) and len(payload) >= 3:
+                    arc_name = self._text_from(payload[0])
+                    start_name = self._text_from(payload[1])
+                    end_name = self._text_from(payload[2])
+                    orientation = self._text_from(payload[3] if len(payload) >= 4 else "above").lower() or "above"
+                    start_point = self._legacy_point_by_name(start_name, point_objects)
+                    end_point = self._legacy_point_by_name(end_name, point_objects)
+                    center = SymSegment(start_point, end_point).midpoint
+                    circle_defs[arc_name] = SymCircle(center, center.distance(start_point))
+                    semicircle_defs[arc_name] = {
+                        "start": start_name,
+                        "end": end_name,
+                        "orientation": orientation,
+                    }
+                    self._legacy_add_semicircle_segments(
+                        normalized=normalized,
+                        point_objects=point_objects,
+                        store_point=store_point,
+                        arc_name=arc_name,
+                        start_name=start_name,
+                        end_name=end_name,
+                        orientation=orientation,
+                    )
+                    continue
+
+                if op_name == "perpendicular" and isinstance(payload, list) and len(payload) >= 3:
+                    line_name = self._text_from(payload[0])
+                    through_name = self._text_from(payload[1])
+                    base_a_name, base_b_name = self._legacy_resolve_pair_ref(payload[2], point_objects)
+                    through_point = self._legacy_point_by_name(through_name, point_objects)
+                    base_a = self._legacy_point_by_name(base_a_name, point_objects)
+                    base_b = self._legacy_point_by_name(base_b_name, point_objects)
+                    helper_name = f"__{line_name}_dir"
+                    helper_point = self._legacy_make_perpendicular_helper(through_point, base_a, base_b)
+                    store_point(helper_name, helper_point, show=False, show_label=False, style="subtle")
+                    line_defs[line_name] = (through_name, helper_name)
+                    continue
+
+                if op_name == "intersection" and isinstance(payload, list) and len(payload) >= 3:
+                    point_name = self._text_from(payload[0])
+                    first_ref = payload[1]
+                    second_ref = payload[2]
+                    try:
+                        preferred_index = int(payload[3]) if len(payload) >= 4 else 0
+                    except (TypeError, ValueError):
+                        preferred_index = 0
+                    line_ref = self._legacy_resolve_line_ref(first_ref, point_objects, line_defs)
+                    circle_ref = self._legacy_resolve_circle_ref(second_ref, circle_defs)
+                    if line_ref is None or circle_ref is None:
+                        line_ref = self._legacy_resolve_line_ref(second_ref, point_objects, line_defs)
+                        circle_ref = self._legacy_resolve_circle_ref(first_ref, circle_defs)
+                    if line_ref is None or circle_ref is None:
+                        raise GeometrySceneError("legacy intersection requires one line and one circle/semicircle")
+                    p1 = self._legacy_point_by_name(line_ref[0], point_objects)
+                    p2 = self._legacy_point_by_name(line_ref[1], point_objects)
+                    candidates = [item for item in circle_ref.intersection(SymLine(p1, p2)) if isinstance(item, SymPoint)]
+                    if not candidates:
+                        raise GeometrySceneError("legacy intersection has no point result")
+                    ordered = sorted(candidates, key=lambda item: (float(item.x), float(item.y)))
+                    index = max(0, min(preferred_index, len(ordered) - 1))
+                    store_point(point_name, ordered[index], style="highlight")
+                    continue
+
+                if op_name == "segment" and isinstance(payload, list) and len(payload) >= 3:
+                    segment_name = self._text_from(payload[0])
+                    from_name = self._text_from(payload[1])
+                    to_name = self._text_from(payload[2])
+                    normalized["segments"].append(
+                        {
+                            "from": from_name,
+                            "to": to_name,
+                            "style": self._legacy_segment_style(segment_name, from_name, to_name),
+                        }
+                    )
+                    continue
+
+                if op_name == "polygon" and isinstance(payload, list) and len(payload) >= 2:
+                    point_names = payload[1] if isinstance(payload[1], list) else []
+                    if len(point_names) >= 2:
+                        normalized["polygons"].append(
+                            {
+                                "points": [self._text_from(item) for item in point_names],
+                                "style": "subtle",
+                                "fill": False,
+                            }
+                        )
+                    continue
+            except Exception as exc:
+                self._debug("legacy geometry item skipped op=%s payload=%r error=%s", op_name, payload, exc)
+
+        self._legacy_apply_measurements(scene, normalized, point_objects)
+        self._legacy_apply_right_angles(scene, normalized, point_objects)
+        self._legacy_apply_labels(scene, point_entries, point_objects, normalized)
+        self._legacy_apply_conclusion(scene, normalized, point_objects)
+
+        normalized["points"] = [point_entries[name] for name in point_order]
+        self._debug("legacy geometry normalized summary: %s", self.describe_scene(normalized))
+        return normalized
+
+    def _legacy_add_semicircle_segments(
+        self,
+        *,
+        normalized: dict[str, Any],
+        point_objects: dict[str, SymPoint],
+        store_point: Callable[..., None],
+        arc_name: str,
+        start_name: str,
+        end_name: str,
+        orientation: str,
+    ) -> None:
+        start_point = self._legacy_point_by_name(start_name, point_objects)
+        end_point = self._legacy_point_by_name(end_name, point_objects)
+        center = SymSegment(start_point, end_point).midpoint
+        radius = float(center.distance(start_point))
+        if radius <= 1e-9:
+            return
+
+        start_angle = math.atan2(float(start_point.y - center.y), float(start_point.x - center.x))
+        end_angle_positive = start_angle + math.pi
+        end_angle_negative = start_angle - math.pi
+        desired_positive = orientation not in {"below", "down", "lower"}
+
+        mid_positive = self._legacy_point_on_circle(center, radius, start_angle + (end_angle_positive - start_angle) / 2.0)
+        positive_side = self._legacy_signed_side(start_point, end_point, mid_positive) >= 0.0
+        end_angle = end_angle_positive if positive_side == desired_positive else end_angle_negative
+
+        sample_count = 24
+        point_chain = [start_name]
+        for index in range(1, sample_count):
+            angle = start_angle + (end_angle - start_angle) * (index / sample_count)
+            arc_point = self._legacy_point_on_circle(center, radius, angle)
+            helper_name = f"__{arc_name}_arc_{index}"
+            store_point(helper_name, arc_point, show=False, show_label=False, style="subtle")
+            point_chain.append(helper_name)
+        point_chain.append(end_name)
+
+        for index in range(len(point_chain) - 1):
+            normalized["segments"].append(
+                {
+                    "from": point_chain[index],
+                    "to": point_chain[index + 1],
+                    "style": "primary",
+                }
+            )
+
+    def _legacy_apply_measurements(
+        self,
+        scene: dict[str, Any],
+        normalized: dict[str, Any],
+        point_objects: dict[str, SymPoint],
+    ) -> None:
+        for raw_entry in scene.get("measurements", []):
+            if not isinstance(raw_entry, list) or len(raw_entry) < 3:
+                continue
+            op_name = self._text_from(raw_entry[0]).lower()
+            if op_name != "distance":
+                continue
+            pair = raw_entry[1]
+            label = self._text_from(raw_entry[2])
+            try:
+                p1_name, p2_name = self._legacy_resolve_pair_ref(pair, point_objects)
+            except Exception:
+                continue
+            segment = self._legacy_find_segment(normalized.get("segments", []), p1_name, p2_name)
+            if segment is not None:
+                segment["label"] = label
+                segment.setdefault("offset", [0.0, 0.16])
+                continue
+            p1 = point_objects.get(p1_name)
+            p2 = point_objects.get(p2_name)
+            if p1 is None or p2 is None or not label:
+                continue
+            midpoint = SymSegment(p1, p2).midpoint
+            normalized["annotations"].append(
+                {
+                    "text": label,
+                    "x": float(midpoint.x),
+                    "y": float(midpoint.y),
+                    "offset": [0.0, 0.16],
+                }
+            )
+
+    def _legacy_apply_right_angles(
+        self,
+        scene: dict[str, Any],
+        normalized: dict[str, Any],
+        point_objects: dict[str, SymPoint],
+    ) -> None:
+        raw_value = scene.get("rightAngle") or scene.get("rightAngles")
+        if not raw_value:
+            return
+        vertices = raw_value if isinstance(raw_value, list) else [raw_value]
+        for value in vertices:
+            vertex_name = self._text_from(value)
+            if not vertex_name or vertex_name not in point_objects:
+                continue
+            pair = self._legacy_pick_right_angle_pair(vertex_name, normalized.get("segments", []), point_objects)
+            if pair is None:
+                continue
+            normalized["angle_marks"].append(
+                {
+                    "vertex": vertex_name,
+                    "from": pair[0],
+                    "to": pair[1],
+                    "right_angle": True,
+                    "style": "highlight",
+                }
+            )
+
+    def _legacy_apply_labels(
+        self,
+        scene: dict[str, Any],
+        point_entries: dict[str, dict[str, Any]],
+        point_objects: dict[str, SymPoint],
+        normalized: dict[str, Any],
+    ) -> None:
+        for raw_entry in scene.get("labels", []):
+            if not isinstance(raw_entry, list) or len(raw_entry) < 3:
+                continue
+            name = self._text_from(raw_entry[0])
+            try:
+                label_x = float(raw_entry[1])
+                label_y = float(raw_entry[2])
+            except (TypeError, ValueError):
+                continue
+            point = point_objects.get(name)
+            entry = point_entries.get(name)
+            if point is not None and entry is not None:
+                entry["offset"] = [label_x - float(point.x), label_y - float(point.y)]
+                entry["show_label"] = True
+                continue
+            normalized["annotations"].append({"text": name, "x": label_x, "y": label_y})
+
+    def _legacy_apply_conclusion(
+        self,
+        scene: dict[str, Any],
+        normalized: dict[str, Any],
+        point_objects: dict[str, SymPoint],
+    ) -> None:
+        conclusion = self._text_from(scene.get("conclusion"))
+        if not conclusion or not point_objects:
+            return
+        xs = [float(point.x) for name, point in point_objects.items() if not name.startswith("__")]
+        ys = [float(point.y) for name, point in point_objects.items() if not name.startswith("__")]
+        if not xs or not ys:
+            return
+        span = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
+        normalized["annotations"].append(
+            {
+                "text": conclusion,
+                "x": (min(xs) + max(xs)) / 2.0,
+                "y": min(ys),
+                "offset": [0.0, -span * 0.22],
+            }
+        )
+
+    def _legacy_find_segment(self, segments: list[Any], p1_name: str, p2_name: str) -> dict[str, Any] | None:
+        for entry in segments:
+            if not isinstance(entry, dict):
+                continue
+            a = self._text_from(entry.get("from"))
+            b = self._text_from(entry.get("to"))
+            if {a, b} == {p1_name, p2_name}:
+                return entry
+        return None
+
+    def _legacy_pick_right_angle_pair(
+        self,
+        vertex_name: str,
+        segments: list[Any],
+        point_objects: dict[str, SymPoint],
+    ) -> tuple[str, str] | None:
+        neighbors: list[str] = []
+        for entry in segments:
+            if not isinstance(entry, dict):
+                continue
+            a = self._text_from(entry.get("from"))
+            b = self._text_from(entry.get("to"))
+            if a == vertex_name and b and b not in neighbors:
+                neighbors.append(b)
+            if b == vertex_name and a and a not in neighbors:
+                neighbors.append(a)
+        if len(neighbors) < 2:
+            return None
+
+        vertex = point_objects[vertex_name]
+        best_pair: tuple[str, str] | None = None
+        best_score = float("inf")
+        for index in range(len(neighbors)):
+            for other_index in range(index + 1, len(neighbors)):
+                p1 = point_objects.get(neighbors[index])
+                p2 = point_objects.get(neighbors[other_index])
+                if p1 is None or p2 is None:
+                    continue
+                vector1 = (float(p1.x - vertex.x), float(p1.y - vertex.y))
+                vector2 = (float(p2.x - vertex.x), float(p2.y - vertex.y))
+                length1 = math.hypot(vector1[0], vector1[1])
+                length2 = math.hypot(vector2[0], vector2[1])
+                if length1 <= 1e-9 or length2 <= 1e-9:
+                    continue
+                cosine = max(min((vector1[0] * vector2[0] + vector1[1] * vector2[1]) / (length1 * length2), 1.0), -1.0)
+                angle = math.degrees(math.acos(cosine))
+                score = abs(angle - 90.0)
+                if score < best_score:
+                    best_score = score
+                    best_pair = (neighbors[index], neighbors[other_index])
+        return best_pair
+
+    def _legacy_segment_style(self, segment_name: str, from_name: str, to_name: str) -> str:
+        lowered = (segment_name or "").lower()
+        if any(token in lowered for token in ("aux", "guide", "help", "dash")):
+            return "auxiliary"
+        if from_name.startswith("__") or to_name.startswith("__"):
+            return "subtle"
+        return "primary"
+
+    def _legacy_make_perpendicular_helper(self, source: SymPoint, base_a: SymPoint, base_b: SymPoint) -> SymPoint:
+        dx = float(base_b.x - base_a.x)
+        dy = float(base_b.y - base_a.y)
+        length = math.hypot(dx, dy)
+        if length <= 1e-9:
+            return SymPoint(float(source.x), float(source.y) + 1.0)
+        scale = max(length * 0.9, 1.0)
+        return SymPoint(float(source.x) - dy / length * scale, float(source.y) + dx / length * scale)
+
+    def _legacy_resolve_line_ref(
+        self,
+        value: Any,
+        point_objects: dict[str, SymPoint],
+        line_defs: dict[str, tuple[str, str]],
+    ) -> tuple[str, str] | None:
+        name = self._text_from(value)
+        if not name:
+            return None
+        if name in line_defs:
+            return line_defs[name]
+        try:
+            return self._legacy_resolve_pair_ref(name, point_objects)
+        except Exception:
+            return None
+
+    def _legacy_resolve_circle_ref(self, value: Any, circle_defs: dict[str, SymCircle]) -> SymCircle | None:
+        name = self._text_from(value)
+        if not name:
+            return None
+        return circle_defs.get(name)
+
+    def _legacy_resolve_pair_ref(self, value: Any, point_objects: dict[str, SymPoint]) -> tuple[str, str]:
+        if isinstance(value, list) and len(value) == 2:
+            left = self._text_from(value[0])
+            right = self._text_from(value[1])
+            if left in point_objects and right in point_objects:
+                return (left, right)
+        token = self._text_from(value)
+        if not token:
+            raise GeometrySceneError("legacy pair reference is empty")
+        pieces = [item for item in re.split(r"[\s,;:_-]+", token) if item]
+        if len(pieces) == 2 and pieces[0] in point_objects and pieces[1] in point_objects:
+            return (pieces[0], pieces[1])
+        for left in sorted(point_objects.keys(), key=len, reverse=True):
+            if not token.startswith(left):
+                continue
+            right = token[len(left) :]
+            if right in point_objects and right != left:
+                return (left, right)
+        raise GeometrySceneError(f"legacy pair reference `{token}` could not be resolved")
+
+    def _legacy_pair_from_names(
+        self,
+        left_name: Any,
+        right_name: Any,
+        point_objects: dict[str, SymPoint],
+    ) -> tuple[SymPoint, SymPoint]:
+        return (
+            self._legacy_point_by_name(self._text_from(left_name), point_objects),
+            self._legacy_point_by_name(self._text_from(right_name), point_objects),
+        )
+
+    def _legacy_point_by_name(self, name: str, point_objects: dict[str, SymPoint]) -> SymPoint:
+        if not name or name not in point_objects:
+            raise GeometrySceneError(f"legacy point `{name}` is undefined")
+        return point_objects[name]
+
+    def _legacy_point_on_circle(self, center: SymPoint, radius: float, angle: float) -> SymPoint:
+        return SymPoint(float(center.x) + math.cos(angle) * radius, float(center.y) + math.sin(angle) * radius)
+
+    def _legacy_signed_side(self, start: SymPoint, end: SymPoint, point: SymPoint) -> float:
+        return (
+            float(end.x - start.x) * float(point.y - start.y)
+            - float(end.y - start.y) * float(point.x - start.x)
+        )
 
     def has_drawable_content(self, scene_input: str | dict[str, Any]) -> bool:
         summary = self.scene_summary(scene_input)
@@ -261,7 +748,7 @@ class GeometryRenderer:
         radius_value = entry.get("radius")
         if through_name:
             through = self._point_ref(through_name, points, "circle through")
-            return SymCircle(center, through)
+            return SymCircle(center, center.distance(through))
         if radius_value is None:
             raise GeometrySceneError("circle needs either `through` or `radius`")
         return SymCircle(center, float(radius_value))

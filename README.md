@@ -26,6 +26,7 @@
 - 几何题支持 `SymPy.geometry + Matplotlib + 场景 JSON`
 - 空几何场景会自动跳过，疑似被错误 viewport 裁空时会先去掉 viewport 再重画一次
 - LLM 或工具参数现在可以为每张解答图单独安排几何图位置
+- 兼容一部分旧式 `GeometryScene/setup/measurements/rightAngle/labels` 几何 DSL，会自动翻译成当前 scene 渲染
 - 临时文件统一放在插件专属目录，并支持自动清理
 - 支持输出 AstrBot 调试级别日志，方便排错
 

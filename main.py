@@ -186,6 +186,11 @@ IMAGE_GEOMETRY_AUTO_RENDER_PROMPT = """如果用户上传的是几何题图片�
 - 除非用户明确只要纯文本，否则不要只是冷冰冰给代码或算式，尽量把最终结果整理成图卡交付"""
 
 
+GEOMETRY_SCHEMA_REMINDER_PROMPT = """When you provide `geometry_scene_json` or `geometry_scene`, return a plain JSON object using supported keys such as `points`, `segments`, `lines`, `rays`, `circles`, `polygons`, `angle_marks`, and `annotations`.
+Do not invent a custom DSL like `{ "type": "GeometryScene", "setup": [...] }`.
+If you need a semicircle or an auxiliary construction, express it with normal points, segments, labels, and other supported geometry fields."""
+
+
 class MathRenderPlugin(Star):
     def __init__(self, context: Context, config: AstrBotConfig | None = None) -> None:
         super().__init__(context)
@@ -224,6 +229,7 @@ class MathRenderPlugin(Star):
             prompt_parts.append(self._text("image_math_auto_render_prompt", IMAGE_MATH_AUTO_RENDER_PROMPT))
         if geometry_tool_prompt_enabled and (is_geometry_text or has_image):
             prompt_parts.append(self._text("geometry_tool_awareness_prompt", GEOMETRY_TOOL_AWARENESS_PROMPT))
+            prompt_parts.append(GEOMETRY_SCHEMA_REMINDER_PROMPT)
         if geometry_tool_prompt_enabled and has_image and self._bool("image_geometry_auto_render_prompt_enabled", True):
             prompt_parts.append(self._text("image_geometry_auto_render_prompt", IMAGE_GEOMETRY_AUTO_RENDER_PROMPT))
         if self._bool("llm_render_layout_prompt_enabled", True):

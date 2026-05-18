@@ -187,6 +187,50 @@ class GeometryRenderer:
         self._merge_point_label_annotations(normalized)
         return normalized
 
+    def _label_position_value(self, entry: dict[str, Any]) -> str:
+        return (
+            self._text_from(entry.get("labelPosition"))
+            or self._text_from(entry.get("label_position"))
+            or self._text_from(entry.get("label_position_name"))
+        )
+
+    def _offset_from_label_position(
+        self,
+        value: Any,
+        *,
+        default: tuple[float, float],
+    ) -> list[float] | None:
+        position = re.sub(r"[^a-z]", "", self._text_from(value).lower())
+        if not position:
+            return None
+
+        alias_map = {
+            "north": (0, 1),
+            "south": (0, -1),
+            "east": (1, 0),
+            "west": (-1, 0),
+            "northeast": (1, 1),
+            "northwest": (-1, 1),
+            "southeast": (1, -1),
+            "southwest": (-1, -1),
+            "above": (0, 1),
+            "below": (0, -1),
+            "left": (-1, 0),
+            "right": (1, 0),
+            "center": (0, 0),
+            "middle": (0, 0),
+        }
+        direction = alias_map.get(position)
+        if direction is None:
+            return None
+
+        base = max(abs(default[0]), abs(default[1]), 0.18)
+        diagonal_scale = 1.2 if abs(direction[0]) and abs(direction[1]) else 1.0
+        return [
+            float(direction[0]) * base * diagonal_scale,
+            float(direction[1]) * base * diagonal_scale,
+        ]
+
     def _rebuild_semicircle_geometry(self, scene: dict[str, Any]) -> None:
         points = scene.get("points")
         circles = scene.get("circles")
@@ -723,10 +767,21 @@ class GeometryRenderer:
         name = self._text_from(normalized.get("name")) or self._text_from(normalized.get("id"))
         if name:
             normalized["name"] = name
+        if "show_label" not in normalized and "showLabel" in normalized:
+            normalized["show_label"] = bool(normalized.get("showLabel"))
+        if "show" not in normalized and "showPoint" in normalized:
+            normalized["show"] = bool(normalized.get("showPoint"))
         if bool(normalized.get("highlight")) and not self._text_from(normalized.get("style")):
             normalized["style"] = "highlight"
         if "label" in normalized and not self._text_from(normalized.get("label")) and "show_label" not in normalized:
             normalized["show_label"] = False
+        if "offset" not in normalized:
+            offset = self._offset_from_label_position(
+                self._label_position_value(normalized),
+                default=(0.12, 0.12),
+            )
+            if offset is not None:
+                normalized["offset"] = offset
         return normalized
 
     def _normalize_segment_aliases(self, entry: Any) -> dict[str, Any] | Any:
@@ -764,6 +819,18 @@ class GeometryRenderer:
             normalized["from"] = from_name
         if to_name:
             normalized["to"] = to_name
+        if "label_pos" not in normalized and "labelPos" in normalized:
+            try:
+                normalized["label_pos"] = float(normalized.get("labelPos"))
+            except (TypeError, ValueError):
+                pass
+        if "offset" not in normalized:
+            offset = self._offset_from_label_position(
+                self._label_position_value(normalized),
+                default=(0.0, 0.16),
+            )
+            if offset is not None:
+                normalized["offset"] = offset
         normalized["style"] = self._normalize_style_alias_value(normalized.get("style"))
         return normalized
 
@@ -852,6 +919,14 @@ class GeometryRenderer:
         normalized = dict(entry)
         circle_type = self._text_from(normalized.get("type")).lower()
         raw_style = self._text_from(normalized.get("style")).lower()
+        if not self._text_from(normalized.get("orientation")):
+            alias_orientation = (
+                self._text_from(normalized.get("semicircleDirection"))
+                or self._text_from(normalized.get("semicircle_direction"))
+                or self._text_from(normalized.get("direction"))
+            )
+            if alias_orientation:
+                normalized["orientation"] = alias_orientation
         orientation = self._text_from(normalized.get("orientation")).lower()
         if bool(normalized.get("semicircle")) and not circle_type:
             circle_type = "semicircle"
@@ -920,8 +995,16 @@ class GeometryRenderer:
         if vertex:
             normalized["vertex"] = vertex
 
-        from_name = self._text_from(normalized.get("from"))
-        to_name = self._text_from(normalized.get("to"))
+        from_name = (
+            self._text_from(normalized.get("from"))
+            or self._text_from(normalized.get("start"))
+            or self._text_from(normalized.get("p1"))
+        )
+        to_name = (
+            self._text_from(normalized.get("to"))
+            or self._text_from(normalized.get("end"))
+            or self._text_from(normalized.get("p2"))
+        )
         arms = normalized.get("arms")
         if isinstance(arms, list) and len(arms) >= 2:
             if not from_name:
@@ -936,7 +1019,10 @@ class GeometryRenderer:
         mark = self._text_from(normalized.get("mark"))
         if mark and not self._text_from(normalized.get("label")):
             normalized["label"] = mark
+        label = self._text_from(normalized.get("label"))
         if mark and "90" in mark:
+            normalized["right_angle"] = True
+        if label and "90" in label:
             normalized["right_angle"] = True
         normalized["style"] = self._normalize_style_alias_value(normalized.get("style"))
         return normalized
@@ -991,7 +1077,10 @@ class GeometryRenderer:
         if not isinstance(value, dict):
             return ""
         return (
-            self._text_from(value.get("to"))
+            self._text_from(value.get("from"))
+            or self._text_from(value.get("start"))
+            or self._text_from(value.get("to"))
+            or self._text_from(value.get("end"))
             or self._text_from(value.get("point"))
             or self._text_from(value.get("name"))
             or self._text_from(value.get("id"))
@@ -1550,19 +1639,23 @@ class GeometryRenderer:
         point_meta: dict[str, dict[str, Any]] = {}
         for entry in scene.get("points", []):
             if not isinstance(entry, dict):
-                raise GeometrySceneError("each point must be an object")
-            name = self._required_text(entry, "name")
-            point = self._resolve_point_entry(entry, points)
-            has_label_key = "label" in entry
-            label_text = self._text_from(entry.get("label"))
-            points[name] = point
-            point_meta[name] = {
-                "label": label_text if has_label_key else name,
-                "show": bool(entry.get("show", True)),
-                "show_label": bool(entry.get("show_label", False if has_label_key and not label_text else True)),
-                "offset": self._pair(entry.get("offset"), default=(0.12, 0.12)),
-                "style": self._style_name(entry.get("style"), default="primary"),
-            }
+                self._debug("geometry point skipped because it is not an object: %r", entry)
+                continue
+            try:
+                name = self._required_text(entry, "name")
+                point = self._resolve_point_entry(entry, points)
+                has_label_key = "label" in entry
+                label_text = self._text_from(entry.get("label"))
+                points[name] = point
+                point_meta[name] = {
+                    "label": label_text if has_label_key else name,
+                    "show": bool(entry.get("show", True)),
+                    "show_label": bool(entry.get("show_label", False if has_label_key and not label_text else True)),
+                    "offset": self._pair(entry.get("offset"), default=(0.12, 0.12)),
+                    "style": self._style_name(entry.get("style"), default="primary"),
+                }
+            except Exception as exc:
+                self._debug("geometry point skipped entry=%r error=%s", entry, exc)
 
         return {
             "points": points,
@@ -1701,147 +1794,159 @@ class GeometryRenderer:
         for entry in scene.get("segments", []):
             if not isinstance(entry, dict):
                 continue
-            p1 = self._point_ref(entry.get("from"), points, "segment from")
-            p2 = self._point_ref(entry.get("to"), points, "segment to")
-            style = self._style(entry.get("style"))
-            ax.plot(
-                [float(p1.x), float(p2.x)],
-                [float(p1.y), float(p2.y)],
-                color=style["color"],
-                linewidth=style["line_width"],
-                linestyle=style["line_style"],
-                alpha=style["alpha"],
-                zorder=style["zorder"],
-            )
-            label = self._text_from(entry.get("label"))
-            if label:
-                try:
-                    label_pos = float(entry.get("label_pos", 0.5))
-                except (TypeError, ValueError):
-                    label_pos = 0.5
-                label_pos = min(max(label_pos, 0.0), 1.0)
-                midpoint = (
-                    float(p1.x) + (float(p2.x) - float(p1.x)) * label_pos,
-                    float(p1.y) + (float(p2.y) - float(p1.y)) * label_pos,
-                )
-                self._draw_text(
-                    ax,
-                    label,
-                    midpoint[0],
-                    midpoint[1],
-                    offset=self._pair(entry.get("offset"), default=(0.0, 0.16)),
+            try:
+                p1 = self._point_ref(entry.get("from"), points, "segment from")
+                p2 = self._point_ref(entry.get("to"), points, "segment to")
+                style = self._style(entry.get("style"))
+                ax.plot(
+                    [float(p1.x), float(p2.x)],
+                    [float(p1.y), float(p2.y)],
                     color=style["color"],
-                    font_size=self._int("geometry_annotation_font_size", 11),
+                    linewidth=style["line_width"],
+                    linestyle=style["line_style"],
+                    alpha=style["alpha"],
+                    zorder=style["zorder"],
                 )
+                label = self._text_from(entry.get("label"))
+                if label:
+                    try:
+                        label_pos = float(entry.get("label_pos", 0.5))
+                    except (TypeError, ValueError):
+                        label_pos = 0.5
+                    label_pos = min(max(label_pos, 0.0), 1.0)
+                    midpoint = (
+                        float(p1.x) + (float(p2.x) - float(p1.x)) * label_pos,
+                        float(p1.y) + (float(p2.y) - float(p1.y)) * label_pos,
+                    )
+                    self._draw_text(
+                        ax,
+                        label,
+                        midpoint[0],
+                        midpoint[1],
+                        offset=self._pair(entry.get("offset"), default=(0.0, 0.16)),
+                        color=style["color"],
+                        font_size=self._int("geometry_annotation_font_size", 11),
+                    )
+            except Exception as exc:
+                self._debug("geometry segment skipped entry=%r error=%s", entry, exc)
 
     def _draw_lines(self, ax: Any, scene: dict[str, Any], points: dict[str, SymPoint], bounds: tuple[float, float, float, float]) -> None:
         span = max(bounds[1] - bounds[0], bounds[3] - bounds[2], 1.0) * 2.2
         for entry in scene.get("lines", []):
             if not isinstance(entry, dict):
                 continue
-            p1, p2 = self._point_pair(entry.get("through"), points, "line through")
-            dx = float(p2.x - p1.x)
-            dy = float(p2.y - p1.y)
-            length = math.hypot(dx, dy)
-            if length <= 1e-9:
-                continue
-            ux = dx / length
-            uy = dy / length
-            style = self._style(entry.get("style"), default="auxiliary")
-            start = (float(p1.x) - ux * span, float(p1.y) - uy * span)
-            end = (float(p1.x) + ux * span, float(p1.y) + uy * span)
-            ax.plot(
-                [start[0], end[0]],
-                [start[1], end[1]],
-                color=style["color"],
-                linewidth=style["line_width"],
-                linestyle=style["line_style"],
-                alpha=style["alpha"],
-                zorder=style["zorder"],
-            )
+            try:
+                p1, p2 = self._point_pair(entry.get("through"), points, "line through")
+                dx = float(p2.x - p1.x)
+                dy = float(p2.y - p1.y)
+                length = math.hypot(dx, dy)
+                if length <= 1e-9:
+                    continue
+                ux = dx / length
+                uy = dy / length
+                style = self._style(entry.get("style"), default="auxiliary")
+                start = (float(p1.x) - ux * span, float(p1.y) - uy * span)
+                end = (float(p1.x) + ux * span, float(p1.y) + uy * span)
+                ax.plot(
+                    [start[0], end[0]],
+                    [start[1], end[1]],
+                    color=style["color"],
+                    linewidth=style["line_width"],
+                    linestyle=style["line_style"],
+                    alpha=style["alpha"],
+                    zorder=style["zorder"],
+                )
+            except Exception as exc:
+                self._debug("geometry line skipped entry=%r error=%s", entry, exc)
 
     def _draw_rays(self, ax: Any, scene: dict[str, Any], points: dict[str, SymPoint], bounds: tuple[float, float, float, float]) -> None:
         span = max(bounds[1] - bounds[0], bounds[3] - bounds[2], 1.0) * 2.2
         for entry in scene.get("rays", []):
             if not isinstance(entry, dict):
                 continue
-            p1 = self._point_ref(entry.get("from"), points, "ray from")
-            p2 = self._point_ref(entry.get("to"), points, "ray to")
-            dx = float(p2.x - p1.x)
-            dy = float(p2.y - p1.y)
-            length = math.hypot(dx, dy)
-            if length <= 1e-9:
-                continue
-            ux = dx / length
-            uy = dy / length
-            style = self._style(entry.get("style"))
-            end = (float(p1.x) + ux * span, float(p1.y) + uy * span)
-            ax.plot(
-                [float(p1.x), end[0]],
-                [float(p1.y), end[1]],
-                color=style["color"],
-                linewidth=style["line_width"],
-                linestyle=style["line_style"],
-                alpha=style["alpha"],
-                zorder=style["zorder"],
-            )
+            try:
+                p1 = self._point_ref(entry.get("from"), points, "ray from")
+                p2 = self._point_ref(entry.get("to"), points, "ray to")
+                dx = float(p2.x - p1.x)
+                dy = float(p2.y - p1.y)
+                length = math.hypot(dx, dy)
+                if length <= 1e-9:
+                    continue
+                ux = dx / length
+                uy = dy / length
+                style = self._style(entry.get("style"))
+                end = (float(p1.x) + ux * span, float(p1.y) + uy * span)
+                ax.plot(
+                    [float(p1.x), end[0]],
+                    [float(p1.y), end[1]],
+                    color=style["color"],
+                    linewidth=style["line_width"],
+                    linestyle=style["line_style"],
+                    alpha=style["alpha"],
+                    zorder=style["zorder"],
+                )
+            except Exception as exc:
+                self._debug("geometry ray skipped entry=%r error=%s", entry, exc)
 
     def _draw_circles(self, ax: Any, scene: dict[str, Any], points: dict[str, SymPoint]) -> None:
         for entry in scene.get("circles", []):
             if not isinstance(entry, dict):
                 continue
-            circle = self._build_circle(entry, points)
-            center = circle.center
-            radius = float(circle.radius)
-            style_name = self._style_name(entry.get("style"), default="primary")
-            style = self._style(style_name, override_color=self._text("geometry_circle_color", ""))
-            arc_angles = self._circle_arc_angles(entry)
-            if arc_angles is None:
-                patch = MplCircle(
-                    (float(center.x), float(center.y)),
-                    radius,
-                    fill=False,
-                    linewidth=style["line_width"],
-                    linestyle=style["line_style"],
-                    edgecolor=style["color"],
-                    alpha=style["alpha"],
-                    zorder=style["zorder"],
-                )
-                label_anchor = (float(center.x), float(center.y))
-                label_offset = self._pair(entry.get("offset"), default=(radius * 0.55, radius * 0.55))
-            else:
-                theta1, theta2 = arc_angles
-                patch = Arc(
-                    (float(center.x), float(center.y)),
-                    width=radius * 2.0,
-                    height=radius * 2.0,
-                    theta1=theta1,
-                    theta2=theta2,
-                    color=style["color"],
-                    linewidth=style["line_width"],
-                    linestyle=style["line_style"],
-                    alpha=style["alpha"],
-                    zorder=style["zorder"],
-                )
-                mid_angle = math.radians(self._arc_mid_angle(theta1, theta2))
-                label_anchor = (
-                    float(center.x) + math.cos(mid_angle) * radius,
-                    float(center.y) + math.sin(mid_angle) * radius,
-                )
-                default_offset = max(radius * 0.08, 0.18)
-                label_offset = self._pair(entry.get("offset"), default=(default_offset, default_offset))
-            ax.add_patch(patch)
-            label = self._text_from(entry.get("label"))
-            if label:
-                self._draw_text(
-                    ax,
-                    label,
-                    label_anchor[0],
-                    label_anchor[1],
-                    offset=label_offset,
-                    color=style["color"],
-                    font_size=self._int("geometry_annotation_font_size", 11),
-                )
+            try:
+                circle = self._build_circle(entry, points)
+                center = circle.center
+                radius = float(circle.radius)
+                style_name = self._style_name(entry.get("style"), default="primary")
+                style = self._style(style_name, override_color=self._text("geometry_circle_color", ""))
+                arc_angles = self._circle_arc_angles(entry)
+                if arc_angles is None:
+                    patch = MplCircle(
+                        (float(center.x), float(center.y)),
+                        radius,
+                        fill=False,
+                        linewidth=style["line_width"],
+                        linestyle=style["line_style"],
+                        edgecolor=style["color"],
+                        alpha=style["alpha"],
+                        zorder=style["zorder"],
+                    )
+                    label_anchor = (float(center.x), float(center.y))
+                    label_offset = self._pair(entry.get("offset"), default=(radius * 0.55, radius * 0.55))
+                else:
+                    theta1, theta2 = arc_angles
+                    patch = Arc(
+                        (float(center.x), float(center.y)),
+                        width=radius * 2.0,
+                        height=radius * 2.0,
+                        theta1=theta1,
+                        theta2=theta2,
+                        color=style["color"],
+                        linewidth=style["line_width"],
+                        linestyle=style["line_style"],
+                        alpha=style["alpha"],
+                        zorder=style["zorder"],
+                    )
+                    mid_angle = math.radians(self._arc_mid_angle(theta1, theta2))
+                    label_anchor = (
+                        float(center.x) + math.cos(mid_angle) * radius,
+                        float(center.y) + math.sin(mid_angle) * radius,
+                    )
+                    default_offset = max(radius * 0.08, 0.18)
+                    label_offset = self._pair(entry.get("offset"), default=(default_offset, default_offset))
+                ax.add_patch(patch)
+                label = self._text_from(entry.get("label"))
+                if label:
+                    self._draw_text(
+                        ax,
+                        label,
+                        label_anchor[0],
+                        label_anchor[1],
+                        offset=label_offset,
+                        color=style["color"],
+                        font_size=self._int("geometry_annotation_font_size", 11),
+                    )
+            except Exception as exc:
+                self._debug("geometry circle skipped entry=%r error=%s", entry, exc)
 
     def _draw_polygons(self, ax: Any, scene: dict[str, Any], points: dict[str, SymPoint]) -> None:
         fill_alpha = max(min(self._float("geometry_fill_alpha", 0.12), 1.0), 0.0)
@@ -1849,26 +1954,29 @@ class GeometryRenderer:
         for entry in scene.get("polygons", []):
             if not isinstance(entry, dict):
                 continue
-            names = entry.get("points")
-            if not isinstance(names, list) or len(names) < 2:
-                continue
-            vertices = []
-            for name in names:
-                point = self._point_ref(name, points, "polygon point")
-                vertices.append((float(point.x), float(point.y)))
-            style = self._style(entry.get("style"), default="subtle")
-            patch = MplPolygon(
-                vertices,
-                closed=bool(entry.get("closed", True)),
-                fill=bool(entry.get("fill", False)),
-                facecolor=fill_color if bool(entry.get("fill", False)) else "none",
-                edgecolor=style["color"],
-                linewidth=style["line_width"],
-                linestyle=style["line_style"],
-                alpha=fill_alpha if bool(entry.get("fill", False)) else style["alpha"],
-                zorder=max(style["zorder"] - 1, 1),
-            )
-            ax.add_patch(patch)
+            try:
+                names = entry.get("points")
+                if not isinstance(names, list) or len(names) < 2:
+                    continue
+                vertices = []
+                for name in names:
+                    point = self._point_ref(name, points, "polygon point")
+                    vertices.append((float(point.x), float(point.y)))
+                style = self._style(entry.get("style"), default="subtle")
+                patch = MplPolygon(
+                    vertices,
+                    closed=bool(entry.get("closed", True)),
+                    fill=bool(entry.get("fill", False)),
+                    facecolor=fill_color if bool(entry.get("fill", False)) else "none",
+                    edgecolor=style["color"],
+                    linewidth=style["line_width"],
+                    linestyle=style["line_style"],
+                    alpha=fill_alpha if bool(entry.get("fill", False)) else style["alpha"],
+                    zorder=max(style["zorder"] - 1, 1),
+                )
+                ax.add_patch(patch)
+            except Exception as exc:
+                self._debug("geometry polygon skipped entry=%r error=%s", entry, exc)
 
     def _draw_angle_marks(self, ax: Any, scene: dict[str, Any], points: dict[str, SymPoint]) -> None:
         default_radius = max(self._float("geometry_default_angle_radius", 0.42), 0.12)
@@ -1877,53 +1985,56 @@ class GeometryRenderer:
         for entry in scene.get("angle_marks", []):
             if not isinstance(entry, dict):
                 continue
-            vertex = self._point_ref(entry.get("vertex"), points, "angle vertex")
-            from_point = self._point_ref(entry.get("from"), points, "angle from")
-            to_point = self._point_ref(entry.get("to"), points, "angle to")
-            radius = float(entry.get("radius", default_radius))
-            count = max(int(entry.get("count", 1) or 1), 1)
-            style = self._style(entry.get("style"), default="highlight", override_color=default_color)
+            try:
+                vertex = self._point_ref(entry.get("vertex"), points, "angle vertex")
+                from_point = self._point_ref(entry.get("from"), points, "angle from")
+                to_point = self._point_ref(entry.get("to"), points, "angle to")
+                radius = float(entry.get("radius", default_radius))
+                count = max(int(entry.get("count", 1) or 1), 1)
+                style = self._style(entry.get("style"), default="highlight", override_color=default_color)
 
-            vx = float(vertex.x)
-            vy = float(vertex.y)
-            angle1 = math.degrees(math.atan2(float(from_point.y - vertex.y), float(from_point.x - vertex.x)))
-            angle2 = math.degrees(math.atan2(float(to_point.y - vertex.y), float(to_point.x - vertex.x)))
-            start, sweep = self._normalize_angle_pair(angle1, angle2)
+                vx = float(vertex.x)
+                vy = float(vertex.y)
+                angle1 = math.degrees(math.atan2(float(from_point.y - vertex.y), float(from_point.x - vertex.x)))
+                angle2 = math.degrees(math.atan2(float(to_point.y - vertex.y), float(to_point.x - vertex.x)))
+                start, sweep = self._normalize_angle_pair(angle1, angle2)
 
-            right_angle = bool(entry.get("right_angle", False)) or abs(sweep - 90.0) <= 3.5
-            if right_angle:
-                self._draw_right_angle(ax, vertex, from_point, to_point, radius, style)
-            else:
-                for index in range(count):
-                    patch = Arc(
-                        (vx, vy),
-                        width=(radius + radius_step * index) * 2.0,
-                        height=(radius + radius_step * index) * 2.0,
-                        theta1=start,
-                        theta2=start + sweep,
+                right_angle = bool(entry.get("right_angle", False)) or abs(sweep - 90.0) <= 3.5
+                if right_angle:
+                    self._draw_right_angle(ax, vertex, from_point, to_point, radius, style)
+                else:
+                    for index in range(count):
+                        patch = Arc(
+                            (vx, vy),
+                            width=(radius + radius_step * index) * 2.0,
+                            height=(radius + radius_step * index) * 2.0,
+                            theta1=start,
+                            theta2=start + sweep,
+                            color=style["color"],
+                            linewidth=style["line_width"],
+                            linestyle=style["line_style"],
+                            alpha=style["alpha"],
+                            zorder=style["zorder"] + 1,
+                        )
+                        ax.add_patch(patch)
+
+                label = self._text_from(entry.get("label"))
+                if label:
+                    label_angle = math.radians(start + sweep / 2.0)
+                    label_radius = radius + radius_step * count + 0.06
+                    x = vx + math.cos(label_angle) * label_radius
+                    y = vy + math.sin(label_angle) * label_radius
+                    self._draw_text(
+                        ax,
+                        label,
+                        x,
+                        y,
+                        offset=(0.0, 0.0),
                         color=style["color"],
-                        linewidth=style["line_width"],
-                        linestyle=style["line_style"],
-                        alpha=style["alpha"],
-                        zorder=style["zorder"] + 1,
+                        font_size=self._int("geometry_annotation_font_size", 11),
                     )
-                    ax.add_patch(patch)
-
-            label = self._text_from(entry.get("label"))
-            if label:
-                label_angle = math.radians(start + sweep / 2.0)
-                label_radius = radius + radius_step * count + 0.06
-                x = vx + math.cos(label_angle) * label_radius
-                y = vy + math.sin(label_angle) * label_radius
-                self._draw_text(
-                    ax,
-                    label,
-                    x,
-                    y,
-                    offset=(0.0, 0.0),
-                    color=style["color"],
-                    font_size=self._int("geometry_annotation_font_size", 11),
-                )
+            except Exception as exc:
+                self._debug("geometry angle mark skipped entry=%r error=%s", entry, exc)
 
     def _draw_right_angle(
         self,
@@ -1957,22 +2068,25 @@ class GeometryRenderer:
         default_color = self._text("geometry_point_color", "") or self._text("geometry_primary_color", "#1D4ED8") or "#1D4ED8"
         for name, point in points.items():
             meta = point_meta.get(name, {})
-            style = self._style(meta.get("style"), default="primary", override_color=default_color)
-            x = float(point.x)
-            y = float(point.y)
-            if meta.get("show", True):
-                size = base_size * (1.25 if meta.get("style") == "highlight" else 1.0)
-                ax.scatter([x], [y], s=size, c=style["color"], zorder=style["zorder"] + 2)
-            if meta.get("show_label", True):
-                self._draw_text(
-                    ax,
-                    meta.get("label", name),
-                    x,
-                    y,
-                    offset=self._pair(meta.get("offset"), default=(0.12, 0.12)),
-                    color=self._text("geometry_text_color", "#0F172A") or "#0F172A",
-                    font_size=label_size,
-                )
+            try:
+                style = self._style(meta.get("style"), default="primary", override_color=default_color)
+                x = float(point.x)
+                y = float(point.y)
+                if meta.get("show", True):
+                    size = base_size * (1.25 if meta.get("style") == "highlight" else 1.0)
+                    ax.scatter([x], [y], s=size, c=style["color"], zorder=style["zorder"] + 2)
+                if meta.get("show_label", True):
+                    self._draw_text(
+                        ax,
+                        meta.get("label", name),
+                        x,
+                        y,
+                        offset=self._pair(meta.get("offset"), default=(0.12, 0.12)),
+                        color=self._text("geometry_text_color", "#0F172A") or "#0F172A",
+                        font_size=label_size,
+                    )
+            except Exception as exc:
+                self._debug("geometry point draw skipped name=%s meta=%r error=%s", name, meta, exc)
 
     def _draw_annotations(self, ax: Any, scene: dict[str, Any], points: dict[str, SymPoint]) -> None:
         font_size = max(self._int("geometry_annotation_font_size", 11), 8)
@@ -1980,26 +2094,29 @@ class GeometryRenderer:
         for entry in scene.get("annotations", []):
             if not isinstance(entry, dict):
                 continue
-            text = self._text_from(entry.get("text"))
-            if not text:
-                continue
-            offset = self._pair(entry.get("offset"), default=(0.0, 0.0))
-            if "at" in entry:
-                point = self._point_ref(entry.get("at"), points, "annotation at")
-                x = float(point.x)
-                y = float(point.y)
-            else:
-                x = float(entry.get("x", 0.0))
-                y = float(entry.get("y", 0.0))
-            self._draw_text(
-                ax,
-                text,
-                x,
-                y,
-                offset=offset,
-                color=self._text_from(entry.get("color")) or default_color,
-                font_size=font_size,
-            )
+            try:
+                text = self._text_from(entry.get("text"))
+                if not text:
+                    continue
+                offset = self._pair(entry.get("offset"), default=(0.0, 0.0))
+                if "at" in entry:
+                    point = self._point_ref(entry.get("at"), points, "annotation at")
+                    x = float(point.x)
+                    y = float(point.y)
+                else:
+                    x = float(entry.get("x", 0.0))
+                    y = float(entry.get("y", 0.0))
+                self._draw_text(
+                    ax,
+                    text,
+                    x,
+                    y,
+                    offset=offset,
+                    color=self._text_from(entry.get("color")) or default_color,
+                    font_size=font_size,
+                )
+            except Exception as exc:
+                self._debug("geometry annotation skipped entry=%r error=%s", entry, exc)
 
     def _draw_text(
         self,

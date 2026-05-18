@@ -188,6 +188,7 @@ IMAGE_GEOMETRY_AUTO_RENDER_PROMPT = """如果用户上传的是几何题图片�
 
 GEOMETRY_SCHEMA_REMINDER_PROMPT = """When you provide `geometry_scene_json` or `geometry_scene`, return a plain JSON object using supported keys such as `points`, `segments`, `lines`, `rays`, `circles`, `polygons`, `angle_marks`, and `annotations`.
 Do not invent a custom DSL like `{ "type": "GeometryScene", "setup": [...] }`.
+Prefer the canonical field names: point `name`, segment/angle `from` + `to`, circle `orientation`, and numeric `offset` for label placement.
 If you need a semicircle or an auxiliary construction, express it with normal points, segments, labels, and other supported geometry fields."""
 
 

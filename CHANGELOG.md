@@ -4,6 +4,20 @@
 
 版本号与 `metadata.yaml` 保持一致，后续发版可继续在顶部追加。
 
+## [v0.3.7] - 2026-05-18
+
+### Changed
+
+- 几何场景兼容层进一步放宽，新增对 `angle_marks.start/end`、`circles[].semicircleDirection`、`labelPosition`、`showLabel`、`showPoint`、`labelPos` 等常见 LLM 变体字段的识别。
+- 自动渲染提示与手动求解提示都补充了 canonical schema reminder，继续鼓励 LLM 优先使用稳定字段名：`name`、`from`/`to`、`orientation`、`offset`。
+
+### Fixed
+
+- 修复 `angle_marks` 使用 `start/end` 时触发 `angle from point reference is empty`，导致几何图整块跳过的问题。
+- 修复部分半圆场景使用 `semicircleDirection` 时方向信息未正确归一化的问题。
+- 修复点标签和线段标签采用 `labelPosition` 时无法正确落位的兼容性问题。
+- 渲染阶段现在会尽量跳过坏掉的单个图元并继续出图，避免某个角标、圆或注释字段异常时把整张几何图一起带崩。
+
 ## [v0.3.6] - 2026-05-18
 
 ### Added

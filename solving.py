@@ -62,6 +62,9 @@ def build_solver_prompt(
             "需要时可以额外返回 `geometry_position`，可选值为 before_content、after_question、after_key_formula、before_answer、after_answer、after_steps、after_final_answer、after_content。"
             "如果是自由排版，优先使用 before_content 或 after_content。"
         )
+        parts.append(
+            "Canonical geometry schema reminder: prefer point `name`, segment/angle `from` + `to`, circle `orientation`, and numeric `offset` for label placement. Avoid ad-hoc field names when a standard field already exists."
+        )
     parts.append(f"题目：{question.strip()}")
     return "\n\n".join(part for part in parts if part.strip())
 

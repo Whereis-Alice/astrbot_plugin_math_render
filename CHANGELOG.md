@@ -4,6 +4,19 @@
 
 版本号与 `metadata.yaml` 保持一致，后续发版可继续在顶部追加。
 
+## [v0.3.5] - 2026-05-18
+
+### Changed
+
+- 几何点位兼容层新增对 `highlight: true` 的识别，可自动映射为高亮点样式。
+- 显式写成 `label: ""` 的点现在会默认隐藏标签，不再回退成点名文本。
+- 对带有 `orientation: up/down/top/bottom` 的半圆场景，新增轻量屏幕坐标兼容：当 LLM 按“屏幕 Y 轴向下”习惯给点位时，会自动翻转到渲染器坐标系。
+
+### Fixed
+
+- 修复 `circles[].center` 直接写成坐标对象时，渲染阶段报 `circle center references unknown point` 导致几何图失败的问题。
+- 修复 `semicircle: true` 配合 `orientation: up/down` 一类写法时，半圆方向无法正确识别的问题。
+
 ## [v0.3.4] - 2026-05-18
 
 ### Changed

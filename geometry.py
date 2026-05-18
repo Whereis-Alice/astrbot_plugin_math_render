@@ -181,9 +181,128 @@ class GeometryRenderer:
                 normalizer(entry)
                 for entry in value
             ]
+        self._maybe_flip_screen_coordinates(normalized)
         self._infer_compact_circle_types(normalized)
         self._merge_point_label_annotations(normalized)
         return normalized
+
+    def _maybe_flip_screen_coordinates(self, scene: dict[str, Any]) -> None:
+        pivot_y = self._screen_flip_pivot(scene)
+        if pivot_y is None:
+            return
+
+        for entry in scene.get("points", []):
+            if not isinstance(entry, dict) or "y" not in entry:
+                continue
+            try:
+                entry["y"] = pivot_y * 2.0 - float(entry["y"])
+            except (TypeError, ValueError):
+                continue
+
+        for entry in scene.get("circles", []):
+            if not isinstance(entry, dict):
+                continue
+            center = entry.get("center")
+            if isinstance(center, dict) and "y" in center:
+                try:
+                    center["y"] = pivot_y * 2.0 - float(center["y"])
+                except (TypeError, ValueError):
+                    pass
+
+        for entry in scene.get("annotations", []):
+            if not isinstance(entry, dict) or "y" not in entry:
+                continue
+            try:
+                entry["y"] = pivot_y * 2.0 - float(entry["y"])
+            except (TypeError, ValueError):
+                continue
+
+    def _screen_flip_pivot(self, scene: dict[str, Any]) -> float | None:
+        points = scene.get("points")
+        circles = scene.get("circles")
+        if not isinstance(points, list) or not isinstance(circles, list):
+            return None
+
+        point_map: dict[str, tuple[float, float]] = {}
+        for entry in points:
+            if not isinstance(entry, dict):
+                continue
+            name = self._text_from(entry.get("name"))
+            if not name:
+                continue
+            try:
+                point_map[name] = (float(entry["x"]), float(entry["y"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+
+        if not point_map:
+            return None
+
+        for circle in circles:
+            if not isinstance(circle, dict):
+                continue
+            orientation = self._text_from(circle.get("orientation")).lower()
+            if orientation not in {"up", "down", "top", "bottom"}:
+                continue
+            center_coords = self._point_coords_from_value(circle.get("center"), point_map)
+            if center_coords is None:
+                continue
+            radius = self._circle_radius_from_entry(circle, point_map, center_coords)
+            if radius is None or radius <= 0:
+                continue
+            cx, cy = center_coords
+            tolerance = max(radius * 0.05, 1e-6)
+            oriented_points = [
+                (x, y)
+                for name, (x, y) in point_map.items()
+                if not (abs(x - cx) <= tolerance and abs(y - cy) <= tolerance)
+                and abs(x - cx) <= radius + tolerance
+            ]
+            if not oriented_points:
+                continue
+            above = sum(1 for _, y in oriented_points if y > cy + tolerance)
+            below = sum(1 for _, y in oriented_points if y < cy - tolerance)
+            if orientation in {"up", "top"} and below > above:
+                return cy
+            if orientation in {"down", "bottom"} and above > below:
+                return cy
+        return None
+
+    def _circle_radius_from_entry(
+        self,
+        entry: dict[str, Any],
+        point_map: dict[str, tuple[float, float]],
+        center: tuple[float, float],
+    ) -> float | None:
+        radius_value = entry.get("radius")
+        if radius_value is not None:
+            try:
+                return float(radius_value)
+            except (TypeError, ValueError):
+                return None
+
+        through_coords = self._point_coords_from_value(entry.get("through"), point_map)
+        if through_coords is None:
+            return None
+        return math.hypot(through_coords[0] - center[0], through_coords[1] - center[1])
+
+    def _point_coords_from_value(
+        self,
+        value: Any,
+        point_map: dict[str, tuple[float, float]],
+    ) -> tuple[float, float] | None:
+        if isinstance(value, dict) and "x" in value and "y" in value:
+            try:
+                return (float(value["x"]), float(value["y"]))
+            except (TypeError, ValueError):
+                return None
+        if isinstance(value, (list, tuple)) and len(value) == 2:
+            try:
+                return (float(value[0]), float(value[1]))
+            except (TypeError, ValueError):
+                return None
+        name = self._text_from(value)
+        return point_map.get(name)
 
     def _infer_compact_circle_types(self, scene: dict[str, Any]) -> None:
         points = scene.get("points")
@@ -345,6 +464,10 @@ class GeometryRenderer:
         name = self._text_from(normalized.get("name")) or self._text_from(normalized.get("id"))
         if name:
             normalized["name"] = name
+        if bool(normalized.get("highlight")) and not self._text_from(normalized.get("style")):
+            normalized["style"] = "highlight"
+        if "label" in normalized and not self._text_from(normalized.get("label")) and "show_label" not in normalized:
+            normalized["show_label"] = False
         return normalized
 
     def _normalize_segment_aliases(self, entry: Any) -> dict[str, Any] | Any:
@@ -471,6 +594,9 @@ class GeometryRenderer:
         circle_type = self._text_from(normalized.get("type")).lower()
         raw_style = self._text_from(normalized.get("style")).lower()
         orientation = self._text_from(normalized.get("orientation")).lower()
+        if bool(normalized.get("semicircle")) and not circle_type:
+            circle_type = "semicircle"
+            normalized["type"] = circle_type
         style_type_map = {
             "semicircle": "semicircle_upper",
             "semicircle_upper": "semicircle_upper",
@@ -490,9 +616,11 @@ class GeometryRenderer:
                 "above": "semicircle_upper",
                 "upper": "semicircle_upper",
                 "top": "semicircle_upper",
+                "up": "semicircle_upper",
                 "below": "semicircle_lower",
                 "lower": "semicircle_lower",
                 "down": "semicircle_lower",
+                "bottom": "semicircle_lower",
                 "left": "semicircle_left",
                 "right": "semicircle_right",
             }
@@ -1166,11 +1294,13 @@ class GeometryRenderer:
                 raise GeometrySceneError("each point must be an object")
             name = self._required_text(entry, "name")
             point = self._resolve_point_entry(entry, points)
+            has_label_key = "label" in entry
+            label_text = self._text_from(entry.get("label"))
             points[name] = point
             point_meta[name] = {
-                "label": self._text_from(entry.get("label")) or name,
+                "label": label_text if has_label_key else name,
                 "show": bool(entry.get("show", True)),
-                "show_label": bool(entry.get("show_label", True)),
+                "show_label": bool(entry.get("show_label", False if has_label_key and not label_text else True)),
                 "offset": self._pair(entry.get("offset"), default=(0.12, 0.12)),
                 "style": self._style_name(entry.get("style"), default="primary"),
             }
@@ -1577,7 +1707,7 @@ class GeometryRenderer:
             if meta.get("show_label", True):
                 self._draw_text(
                     ax,
-                    meta.get("label") or name,
+                    meta.get("label", name),
                     x,
                     y,
                     offset=self._pair(meta.get("offset"), default=(0.12, 0.12)),
@@ -1857,6 +1987,19 @@ class GeometryRenderer:
         )
 
     def _point_ref(self, value: Any, points: dict[str, SymPoint], context: str) -> SymPoint:
+        if isinstance(value, dict):
+            if "x" in value and "y" in value:
+                try:
+                    return SymPoint(float(value["x"]), float(value["y"]))
+                except (TypeError, ValueError) as exc:
+                    raise GeometrySceneError(f"{context} has invalid inline coordinates") from exc
+            value = self._text_from(value.get("name")) or self._text_from(value.get("id"))
+        elif isinstance(value, (list, tuple)) and len(value) == 2:
+            try:
+                return SymPoint(float(value[0]), float(value[1]))
+            except (TypeError, ValueError):
+                pass
+
         name = self._text_from(value)
         if not name:
             raise GeometrySceneError(f"{context} point reference is empty")

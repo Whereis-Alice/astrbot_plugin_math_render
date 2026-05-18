@@ -27,6 +27,7 @@
 - 空几何场景会自动跳过，疑似被错误 viewport 裁空时会先去掉 viewport 再重画一次
 - LLM 或工具参数现在可以为每张解答图单独安排几何图位置
 - 兼容一部分旧式 `GeometryScene/setup/measurements/rightAngle/labels` 几何 DSL，会自动翻译成当前 scene 渲染
+- 兼容更宽松的 scene JSON 变体，例如 `point.id`、`angle_marks.arms/mark`、`style: dashed/thick` 与 `semicircle_upper`
 - 临时文件统一放在插件专属目录，并支持自动清理
 - 支持输出 AstrBot 调试级别日志，方便排错
 
@@ -284,6 +285,7 @@ AstrBot/data/plugins/astrbot_plugin_math_render/temp
 - `geometry_point_size`
 - `geometry_label_font_size`
 - `geometry_annotation_font_size`
+- `geometry_font_family`
 - `geometry_background_color`
 - `geometry_transparent_background`
 - `geometry_primary_color`
@@ -296,6 +298,8 @@ AstrBot/data/plugins/astrbot_plugin_math_render/temp
 - `geometry_text_color`
 - `geometry_circle_color`
 - `geometry_angle_color`
+
+若 Linux 服务器里的几何中文标注显示成方框或问号，建议安装 `Noto Sans CJK SC` / `WenQuanYi Zen Hei`，并把 `geometry_font_family` 配成服务器上实际存在的字体名。
 
 ### 图卡样式
 

@@ -13,7 +13,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 
-from matplotlib import pyplot as plt
+from matplotlib import font_manager, pyplot as plt
 from matplotlib.patches import Arc, Circle as MplCircle, Polygon as MplPolygon
 from sympy.geometry import Circle as SymCircle
 from sympy.geometry import Line as SymLine
@@ -142,6 +142,8 @@ class GeometryRenderer:
 
         if self._looks_like_legacy_scene(scene):
             scene = self._normalize_legacy_scene(scene)
+        else:
+            scene = self._normalize_scene_aliases(scene)
 
         normalized = dict(scene)
         for key in ("points", "segments", "lines", "rays", "circles", "polygons", "angle_marks", "annotations"):
@@ -158,6 +160,183 @@ class GeometryRenderer:
             raise GeometrySceneError("`viewport` must be an object when provided")
         normalized["viewport"] = viewport
         return normalized
+
+    def _normalize_scene_aliases(self, scene: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(scene)
+        collection_normalizers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+            "points": self._normalize_point_aliases,
+            "segments": self._normalize_segment_aliases,
+            "lines": self._normalize_line_aliases,
+            "rays": self._normalize_ray_aliases,
+            "circles": self._normalize_circle_aliases,
+            "polygons": self._normalize_polygon_aliases,
+            "angle_marks": self._normalize_angle_mark_aliases,
+            "annotations": self._normalize_annotation_aliases,
+        }
+        for key, normalizer in collection_normalizers.items():
+            value = normalized.get(key)
+            if not isinstance(value, list):
+                continue
+            normalized[key] = [
+                normalizer(entry) if isinstance(entry, dict) else entry
+                for entry in value
+            ]
+        return normalized
+
+    def _normalize_point_aliases(self, entry: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(entry)
+        name = self._text_from(normalized.get("name")) or self._text_from(normalized.get("id"))
+        if name:
+            normalized["name"] = name
+        return normalized
+
+    def _normalize_segment_aliases(self, entry: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(entry)
+        from_name = (
+            self._text_from(normalized.get("from"))
+            or self._text_from(normalized.get("start"))
+            or self._text_from(normalized.get("p1"))
+        )
+        to_name = (
+            self._text_from(normalized.get("to"))
+            or self._text_from(normalized.get("end"))
+            or self._text_from(normalized.get("p2"))
+        )
+        if from_name:
+            normalized["from"] = from_name
+        if to_name:
+            normalized["to"] = to_name
+        normalized["style"] = self._normalize_style_alias_value(normalized.get("style"))
+        return normalized
+
+    def _normalize_line_aliases(self, entry: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(entry)
+        through = normalized.get("through")
+        if not isinstance(through, list):
+            alt = normalized.get("points")
+            if isinstance(alt, list):
+                normalized["through"] = alt
+        normalized["style"] = self._normalize_style_alias_value(normalized.get("style"))
+        return normalized
+
+    def _normalize_ray_aliases(self, entry: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(entry)
+        from_name = (
+            self._text_from(normalized.get("from"))
+            or self._text_from(normalized.get("start"))
+            or self._text_from(normalized.get("p1"))
+        )
+        to_name = (
+            self._text_from(normalized.get("to"))
+            or self._text_from(normalized.get("through"))
+            or self._text_from(normalized.get("p2"))
+        )
+        if from_name:
+            normalized["from"] = from_name
+        if to_name:
+            normalized["to"] = to_name
+        normalized["style"] = self._normalize_style_alias_value(normalized.get("style"))
+        return normalized
+
+    def _normalize_circle_aliases(self, entry: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(entry)
+        normalized["style"] = self._normalize_style_alias_value(normalized.get("style"))
+        circle_type = self._text_from(normalized.get("type")).lower()
+        orientation = self._text_from(normalized.get("orientation")).lower()
+        if circle_type == "semicircle":
+            orientation_map = {
+                "above": "semicircle_upper",
+                "upper": "semicircle_upper",
+                "top": "semicircle_upper",
+                "below": "semicircle_lower",
+                "lower": "semicircle_lower",
+                "down": "semicircle_lower",
+                "left": "semicircle_left",
+                "right": "semicircle_right",
+            }
+            normalized["type"] = orientation_map.get(orientation, "semicircle_upper")
+        return normalized
+
+    def _normalize_polygon_aliases(self, entry: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(entry)
+        if not isinstance(normalized.get("points"), list):
+            vertices = normalized.get("vertices")
+            if isinstance(vertices, list):
+                normalized["points"] = vertices
+        normalized["style"] = self._normalize_style_alias_value(normalized.get("style"))
+        return normalized
+
+    def _normalize_angle_mark_aliases(self, entry: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(entry)
+        vertex = self._text_from(normalized.get("vertex")) or self._text_from(normalized.get("at"))
+        if vertex:
+            normalized["vertex"] = vertex
+
+        from_name = self._text_from(normalized.get("from"))
+        to_name = self._text_from(normalized.get("to"))
+        arms = normalized.get("arms")
+        if isinstance(arms, list) and len(arms) >= 2:
+            if not from_name:
+                from_name = self._arm_point_name(arms[0])
+            if not to_name:
+                to_name = self._arm_point_name(arms[1])
+        if from_name:
+            normalized["from"] = from_name
+        if to_name:
+            normalized["to"] = to_name
+
+        mark = self._text_from(normalized.get("mark"))
+        if mark and not self._text_from(normalized.get("label")):
+            normalized["label"] = mark
+        if mark and "90" in mark:
+            normalized["right_angle"] = True
+        normalized["style"] = self._normalize_style_alias_value(normalized.get("style"))
+        return normalized
+
+    def _normalize_annotation_aliases(self, entry: dict[str, Any]) -> dict[str, Any]:
+        normalized = dict(entry)
+        at_name = self._text_from(normalized.get("at")) or self._text_from(normalized.get("point"))
+        if at_name:
+            normalized["at"] = at_name
+        return normalized
+
+    def _arm_point_name(self, value: Any) -> str:
+        if isinstance(value, str):
+            return self._text_from(value)
+        if not isinstance(value, dict):
+            return ""
+        return (
+            self._text_from(value.get("to"))
+            or self._text_from(value.get("point"))
+            or self._text_from(value.get("name"))
+            or self._text_from(value.get("id"))
+        )
+
+    def _normalize_style_alias_value(self, value: Any) -> Any:
+        candidate = self._text_from(value).lower()
+        if not candidate:
+            return value
+        alias_map = {
+            "main": "primary",
+            "solid": "primary",
+            "normal": "primary",
+            "default": "primary",
+            "aux": "auxiliary",
+            "auxiliary": "auxiliary",
+            "dashed": "auxiliary",
+            "dash": "auxiliary",
+            "helper": "auxiliary",
+            "construction": "auxiliary",
+            "highlight": "highlight",
+            "thick": "highlight",
+            "bold": "highlight",
+            "focus": "highlight",
+            "subtle": "subtle",
+            "thin": "subtle",
+            "faint": "subtle",
+            "light": "subtle",
+        }
+        return alias_map.get(candidate, value)
 
     def _looks_like_legacy_scene(self, scene: dict[str, Any]) -> bool:
         return isinstance(scene.get("setup"), list)
@@ -849,7 +1028,15 @@ class GeometryRenderer:
             )
             label = self._text_from(entry.get("label"))
             if label:
-                midpoint = ((float(p1.x) + float(p2.x)) / 2.0, (float(p1.y) + float(p2.y)) / 2.0)
+                try:
+                    label_pos = float(entry.get("label_pos", 0.5))
+                except (TypeError, ValueError):
+                    label_pos = 0.5
+                label_pos = min(max(label_pos, 0.0), 1.0)
+                midpoint = (
+                    float(p1.x) + (float(p2.x) - float(p1.x)) * label_pos,
+                    float(p1.y) + (float(p2.y) - float(p1.y)) * label_pos,
+                )
                 self._draw_text(
                     ax,
                     label,
@@ -921,25 +1108,50 @@ class GeometryRenderer:
             radius = float(circle.radius)
             style_name = self._style_name(entry.get("style"), default="primary")
             style = self._style(style_name, override_color=self._text("geometry_circle_color", ""))
-            patch = MplCircle(
-                (float(center.x), float(center.y)),
-                radius,
-                fill=False,
-                linewidth=style["line_width"],
-                linestyle=style["line_style"],
-                edgecolor=style["color"],
-                alpha=style["alpha"],
-                zorder=style["zorder"],
-            )
+            arc_angles = self._circle_arc_angles(entry)
+            if arc_angles is None:
+                patch = MplCircle(
+                    (float(center.x), float(center.y)),
+                    radius,
+                    fill=False,
+                    linewidth=style["line_width"],
+                    linestyle=style["line_style"],
+                    edgecolor=style["color"],
+                    alpha=style["alpha"],
+                    zorder=style["zorder"],
+                )
+                label_anchor = (float(center.x), float(center.y))
+                label_offset = self._pair(entry.get("offset"), default=(radius * 0.55, radius * 0.55))
+            else:
+                theta1, theta2 = arc_angles
+                patch = Arc(
+                    (float(center.x), float(center.y)),
+                    width=radius * 2.0,
+                    height=radius * 2.0,
+                    theta1=theta1,
+                    theta2=theta2,
+                    color=style["color"],
+                    linewidth=style["line_width"],
+                    linestyle=style["line_style"],
+                    alpha=style["alpha"],
+                    zorder=style["zorder"],
+                )
+                mid_angle = math.radians(self._arc_mid_angle(theta1, theta2))
+                label_anchor = (
+                    float(center.x) + math.cos(mid_angle) * radius,
+                    float(center.y) + math.sin(mid_angle) * radius,
+                )
+                default_offset = max(radius * 0.08, 0.18)
+                label_offset = self._pair(entry.get("offset"), default=(default_offset, default_offset))
             ax.add_patch(patch)
             label = self._text_from(entry.get("label"))
             if label:
                 self._draw_text(
                     ax,
                     label,
-                    float(center.x),
-                    float(center.y),
-                    offset=self._pair(entry.get("offset"), default=(radius * 0.55, radius * 0.55)),
+                    label_anchor[0],
+                    label_anchor[1],
+                    offset=label_offset,
                     color=style["color"],
                     font_size=self._int("geometry_annotation_font_size", 11),
                 )
@@ -1119,6 +1331,7 @@ class GeometryRenderer:
             y + offset[1],
             label,
             fontsize=font_size,
+            fontfamily=self._font_families(),
             color=color,
             ha="left",
             va="bottom",
@@ -1152,8 +1365,14 @@ class GeometryRenderer:
                 continue
             center = circle.center
             radius = float(circle.radius)
-            xs.extend([float(center.x) - radius, float(center.x) + radius])
-            ys.extend([float(center.y) - radius, float(center.y) + radius])
+            arc_angles = self._circle_arc_angles(entry)
+            if arc_angles is None:
+                xs.extend([float(center.x) - radius, float(center.x) + radius])
+                ys.extend([float(center.y) - radius, float(center.y) + radius])
+                continue
+            for x, y in self._arc_bounds_points(center, radius, arc_angles[0], arc_angles[1]):
+                xs.append(x)
+                ys.append(y)
 
         if not xs or not ys:
             xs = [0.0, 1.0]
@@ -1231,10 +1450,75 @@ class GeometryRenderer:
         return style
 
     def _style_name(self, value: Any, *, default: str) -> str:
-        candidate = self._text_from(value).lower()
+        candidate = self._text_from(self._normalize_style_alias_value(value)).lower()
         if candidate in {"primary", "auxiliary", "highlight", "subtle"}:
             return candidate
         return default
+
+    def _circle_arc_angles(self, entry: Any) -> tuple[float, float] | None:
+        if not isinstance(entry, dict):
+            return None
+        theta1 = entry.get("theta1")
+        theta2 = entry.get("theta2")
+        if theta1 is not None and theta2 is not None:
+            try:
+                return (float(theta1), float(theta2))
+            except (TypeError, ValueError):
+                return None
+
+        circle_type = self._text_from(entry.get("type")).lower()
+        angle_map = {
+            "semicircle_upper": (0.0, 180.0),
+            "semicircle_lower": (180.0, 360.0),
+            "semicircle_left": (90.0, 270.0),
+            "semicircle_right": (-90.0, 90.0),
+        }
+        return angle_map.get(circle_type)
+
+    def _arc_mid_angle(self, theta1: float, theta2: float) -> float:
+        start = theta1 % 360.0
+        sweep = (theta2 - theta1) % 360.0
+        if sweep <= 1e-9 and abs(theta2 - theta1) > 1e-9:
+            sweep = 360.0
+        return (start + sweep / 2.0) % 360.0
+
+    def _arc_bounds_points(
+        self,
+        center: SymPoint,
+        radius: float,
+        theta1: float,
+        theta2: float,
+    ) -> list[tuple[float, float]]:
+        start = theta1 % 360.0
+        sweep = (theta2 - theta1) % 360.0
+        if sweep <= 1e-9 and abs(theta2 - theta1) > 1e-9:
+            sweep = 360.0
+        angles = [start, (start + sweep) % 360.0]
+        for candidate in (0.0, 90.0, 180.0, 270.0):
+            if self._angle_on_arc(candidate, start, sweep):
+                angles.append(candidate)
+        points: list[tuple[float, float]] = []
+        seen: set[tuple[int, int]] = set()
+        for angle in angles:
+            normalized = angle % 360.0
+            key = (int(round(normalized * 1000)), int(round(radius * 1000)))
+            if key in seen:
+                continue
+            seen.add(key)
+            radians_value = math.radians(normalized)
+            points.append(
+                (
+                    float(center.x) + math.cos(radians_value) * radius,
+                    float(center.y) + math.sin(radians_value) * radius,
+                )
+            )
+        return points
+
+    def _angle_on_arc(self, angle: float, start: float, sweep: float) -> bool:
+        if sweep >= 360.0 - 1e-9:
+            return True
+        relative = (angle - start) % 360.0
+        return relative <= sweep + 1e-9
 
     def _normalize_angle_pair(self, angle1: float, angle2: float) -> tuple[float, float]:
         start = angle1 % 360.0
@@ -1314,6 +1598,31 @@ class GeometryRenderer:
     def _make_cache_key(self, scene: dict[str, Any]) -> str:
         raw = json.dumps(scene, ensure_ascii=False, sort_keys=True)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+
+    def _font_families(self) -> list[str]:
+        configured = self._text("geometry_font_family", "")
+        defaults = [
+            "Noto Sans CJK SC",
+            "Microsoft YaHei",
+            "PingFang SC",
+            "SimHei",
+            "WenQuanYi Zen Hei",
+            "Source Han Sans SC",
+            "Arial Unicode MS",
+            "DejaVu Sans",
+        ]
+        families = [item.strip() for item in configured.split(",") if item.strip()]
+        families.extend(defaults)
+        available = {item.name.casefold() for item in font_manager.fontManager.ttflist}
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for family in families:
+            key = family.casefold()
+            if key in seen or key not in available:
+                continue
+            seen.add(key)
+            deduped.append(family)
+        return deduped or ["DejaVu Sans"]
 
     def _text(self, key: str, default: str) -> str:
         value = self._config.get(key, default)

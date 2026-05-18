@@ -454,6 +454,12 @@
     "description": "几何注释字号",
     "default": 11
   },
+  "geometry_font_family": {
+    "type": "string",
+    "description": "几何文字字体回退链，多个字体用逗号分隔",
+    "default": "",
+    "hint": "留空时会使用内置的跨 Windows/Linux 中文与符号字体回退列表"
+  },
   "geometry_background_color": {
     "type": "string",
     "description": "几何图背景色",

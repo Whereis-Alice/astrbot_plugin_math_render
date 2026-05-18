@@ -4,5 +4,5 @@ desc: 提供 LaTeX 公式渲染、数学解答出图、Markdown 数学卡片与�
 short_desc: 高质量数学公式、解答图卡与几何图渲染插件。
 version: v0.2.0
 author: Huli3
-repo: https://github.com/Huli3/astrbot_plugin_math_render
+repo: https://github.com/Whereis-Alice/astrbot_plugin_math_render
 astrbot_version: ">=4.16,<5"

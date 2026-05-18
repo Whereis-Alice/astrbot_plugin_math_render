@@ -182,9 +182,268 @@ class GeometryRenderer:
                 for entry in value
             ]
         self._maybe_flip_screen_coordinates(normalized)
+        self._rebuild_semicircle_geometry(normalized)
         self._infer_compact_circle_types(normalized)
         self._merge_point_label_annotations(normalized)
         return normalized
+
+    def _rebuild_semicircle_geometry(self, scene: dict[str, Any]) -> None:
+        points = scene.get("points")
+        circles = scene.get("circles")
+        segments = scene.get("segments")
+        if not isinstance(points, list) or not isinstance(circles, list) or not isinstance(segments, list):
+            return
+
+        point_entries: dict[str, dict[str, Any]] = {}
+        point_coords: dict[str, tuple[float, float]] = {}
+        for entry in points:
+            if not isinstance(entry, dict):
+                continue
+            name = self._text_from(entry.get("name"))
+            if not name:
+                continue
+            coords = self._point_coords_from_entry(entry)
+            if coords is None:
+                continue
+            point_entries[name] = entry
+            point_coords[name] = coords
+
+        if len(point_coords) < 3:
+            return
+
+        adjacency = self._segment_adjacency(segments)
+        segment_pairs = {
+            frozenset((self._text_from(entry.get("from")), self._text_from(entry.get("to"))))
+            for entry in segments
+            if isinstance(entry, dict)
+            and self._text_from(entry.get("from"))
+            and self._text_from(entry.get("to"))
+        }
+
+        for circle in circles:
+            if not isinstance(circle, dict):
+                continue
+            orientation_key = self._semicircle_orientation_key(circle)
+            if not orientation_key:
+                continue
+            center_coords = self._point_coords_from_value(circle.get("center"), point_coords)
+            if center_coords is None:
+                continue
+
+            diameter = self._find_semicircle_diameter(
+                center=center_coords,
+                orientation_key=orientation_key,
+                point_coords=point_coords,
+                segment_pairs=segment_pairs,
+            )
+            if diameter is None:
+                continue
+
+            first_name, second_name = diameter
+            first = point_coords[first_name]
+            second = point_coords[second_name]
+            radius = math.hypot(second[0] - first[0], second[1] - first[1]) / 2.0
+            if radius <= 1e-6:
+                continue
+
+            circle["radius"] = radius
+            circle["through"] = first_name
+            circle.setdefault("style", "primary")
+
+            center_name = self._name_for_coords(center_coords, point_coords)
+            self._project_semicircle_points(
+                orientation_key=orientation_key,
+                center=center_coords,
+                center_name=center_name,
+                radius=radius,
+                diameter=(first_name, second_name),
+                point_entries=point_entries,
+                point_coords=point_coords,
+                adjacency=adjacency,
+            )
+
+    def _find_semicircle_diameter(
+        self,
+        *,
+        center: tuple[float, float],
+        orientation_key: str,
+        point_coords: dict[str, tuple[float, float]],
+        segment_pairs: set[frozenset[str]],
+    ) -> tuple[str, str] | None:
+        names = list(point_coords.keys())
+        if len(names) < 2:
+            return None
+
+        xs = [coords[0] for coords in point_coords.values()]
+        ys = [coords[1] for coords in point_coords.values()]
+        span = max(max(xs) - min(xs), max(ys) - min(ys), 1.0)
+        tolerance = max(span * 0.03, 2.0)
+        horizontal = orientation_key in {"upper", "lower"}
+
+        best_pair: tuple[str, str] | None = None
+        best_score: tuple[int, float] | None = None
+        cx, cy = center
+
+        for index, first_name in enumerate(names):
+            x1, y1 = point_coords[first_name]
+            for second_name in names[index + 1 :]:
+                x2, y2 = point_coords[second_name]
+                if horizontal:
+                    if abs(y1 - cy) > tolerance or abs(y2 - cy) > tolerance:
+                        continue
+                else:
+                    if abs(x1 - cx) > tolerance or abs(x2 - cx) > tolerance:
+                        continue
+                if abs((x1 + x2) / 2.0 - cx) > tolerance or abs((y1 + y2) / 2.0 - cy) > tolerance:
+                    continue
+
+                distance = math.hypot(x2 - x1, y2 - y1)
+                has_segment = 1 if frozenset((first_name, second_name)) in segment_pairs else 0
+                score = (has_segment, distance)
+                if best_score is None or score > best_score:
+                    best_score = score
+                    best_pair = (first_name, second_name)
+
+        return best_pair
+
+    def _project_semicircle_points(
+        self,
+        *,
+        orientation_key: str,
+        center: tuple[float, float],
+        center_name: str,
+        radius: float,
+        diameter: tuple[str, str],
+        point_entries: dict[str, dict[str, Any]],
+        point_coords: dict[str, tuple[float, float]],
+        adjacency: dict[str, set[str]],
+    ) -> None:
+        horizontal = orientation_key in {"upper", "lower"}
+        sign = 1.0 if orientation_key in {"upper", "right"} else -1.0
+        first_name, second_name = diameter
+        first = point_coords[first_name]
+        second = point_coords[second_name]
+        cx, cy = center
+        tolerance = max(radius * 0.05, 2.0)
+
+        for name, entry in point_entries.items():
+            if name in {first_name, second_name, center_name}:
+                continue
+            coords = point_coords.get(name)
+            if coords is None:
+                continue
+            x, y = coords
+
+            if horizontal:
+                if x < min(first[0], second[0]) - tolerance or x > max(first[0], second[0]) + tolerance:
+                    continue
+                if abs(y - cy) <= tolerance:
+                    continue
+                inside = radius * radius - (x - cx) * (x - cx)
+                if inside < 0:
+                    continue
+                target_coords = (x, cy + sign * math.sqrt(max(inside, 0.0)))
+                on_axis_helper = abs(x - cx) <= tolerance and center_name in adjacency.get(name, set())
+                foot_names = [
+                    other
+                    for other in adjacency.get(name, set())
+                    if other in point_coords
+                    and abs(point_coords[other][0] - x) <= tolerance
+                    and abs(point_coords[other][1] - cy) <= tolerance
+                ]
+                touches_diameter_ends = first_name in adjacency.get(name, set()) and second_name in adjacency.get(name, set())
+                if not (on_axis_helper or foot_names or touches_diameter_ends):
+                    continue
+                entry["y"] = float(target_coords[1])
+                point_coords[name] = target_coords
+                if on_axis_helper and not self._text_from(entry.get("label")):
+                    entry["show"] = False
+                    entry["show_label"] = False
+            else:
+                if y < min(first[1], second[1]) - tolerance or y > max(first[1], second[1]) + tolerance:
+                    continue
+                if abs(x - cx) <= tolerance:
+                    continue
+                inside = radius * radius - (y - cy) * (y - cy)
+                if inside < 0:
+                    continue
+                target_coords = (cx + sign * math.sqrt(max(inside, 0.0)), y)
+                on_axis_helper = abs(y - cy) <= tolerance and center_name in adjacency.get(name, set())
+                foot_names = [
+                    other
+                    for other in adjacency.get(name, set())
+                    if other in point_coords
+                    and abs(point_coords[other][1] - y) <= tolerance
+                    and abs(point_coords[other][0] - cx) <= tolerance
+                ]
+                touches_diameter_ends = first_name in adjacency.get(name, set()) and second_name in adjacency.get(name, set())
+                if not (on_axis_helper or foot_names or touches_diameter_ends):
+                    continue
+                entry["x"] = float(target_coords[0])
+                point_coords[name] = target_coords
+                if on_axis_helper and not self._text_from(entry.get("label")):
+                    entry["show"] = False
+                    entry["show_label"] = False
+
+    def _segment_adjacency(self, segments: list[Any]) -> dict[str, set[str]]:
+        adjacency: dict[str, set[str]] = {}
+        for entry in segments:
+            if not isinstance(entry, dict):
+                continue
+            first = self._text_from(entry.get("from"))
+            second = self._text_from(entry.get("to"))
+            if not first or not second:
+                continue
+            adjacency.setdefault(first, set()).add(second)
+            adjacency.setdefault(second, set()).add(first)
+        return adjacency
+
+    def _semicircle_orientation_key(self, circle: dict[str, Any]) -> str:
+        circle_type = self._text_from(circle.get("type")).lower()
+        type_map = {
+            "semicircle_upper": "upper",
+            "semicircle_lower": "lower",
+            "semicircle_left": "left",
+            "semicircle_right": "right",
+        }
+        if circle_type in type_map:
+            return type_map[circle_type]
+
+        orientation = self._text_from(circle.get("orientation")).lower()
+        orientation_map = {
+            "up": "upper",
+            "upper": "upper",
+            "top": "upper",
+            "above": "upper",
+            "down": "lower",
+            "lower": "lower",
+            "bottom": "lower",
+            "below": "lower",
+            "left": "left",
+            "right": "right",
+        }
+        if bool(circle.get("semicircle")):
+            return orientation_map.get(orientation, "upper")
+        return orientation_map.get(orientation, "")
+
+    def _point_coords_from_entry(self, entry: dict[str, Any]) -> tuple[float, float] | None:
+        if "x" not in entry or "y" not in entry:
+            return None
+        try:
+            return (float(entry["x"]), float(entry["y"]))
+        except (TypeError, ValueError):
+            return None
+
+    def _name_for_coords(
+        self,
+        coords: tuple[float, float],
+        point_coords: dict[str, tuple[float, float]],
+    ) -> str:
+        cx, cy = coords
+        for name, (x, y) in point_coords.items():
+            if abs(x - cx) <= 1e-6 and abs(y - cy) <= 1e-6:
+                return name
+        return ""
 
     def _maybe_flip_screen_coordinates(self, scene: dict[str, Any]) -> None:
         pivot_y = self._screen_flip_pivot(scene)

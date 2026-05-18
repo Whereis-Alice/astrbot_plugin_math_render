@@ -178,11 +178,94 @@ class GeometryRenderer:
             if not isinstance(value, list):
                 continue
             normalized[key] = [
-                normalizer(entry) if isinstance(entry, dict) else entry
+                normalizer(entry)
                 for entry in value
             ]
+        self._infer_compact_circle_types(normalized)
         self._merge_point_label_annotations(normalized)
         return normalized
+
+    def _infer_compact_circle_types(self, scene: dict[str, Any]) -> None:
+        points = scene.get("points")
+        circles = scene.get("circles")
+        if not isinstance(points, list) or not isinstance(circles, list):
+            return
+
+        point_map: dict[str, tuple[float, float]] = {}
+        for entry in points:
+            if not isinstance(entry, dict):
+                continue
+            name = self._text_from(entry.get("name"))
+            if not name:
+                continue
+            try:
+                point_map[name] = (float(entry["x"]), float(entry["y"]))
+            except (KeyError, TypeError, ValueError):
+                continue
+
+        if not point_map:
+            return
+
+        for entry in circles:
+            if not isinstance(entry, dict):
+                continue
+            if not entry.get("_compact_array") or self._text_from(entry.get("type")):
+                continue
+            center_name = self._text_from(entry.get("center"))
+            if not center_name or center_name not in point_map:
+                continue
+            try:
+                radius = float(entry.get("radius"))
+            except (TypeError, ValueError):
+                continue
+            if radius <= 0:
+                continue
+
+            inferred = self._infer_semicircle_type_from_points(center_name, radius, point_map)
+            if inferred:
+                entry["type"] = inferred
+                entry.setdefault("style", "primary")
+
+    def _infer_semicircle_type_from_points(
+        self,
+        center_name: str,
+        radius: float,
+        point_map: dict[str, tuple[float, float]],
+    ) -> str:
+        cx, cy = point_map[center_name]
+        tolerance = max(radius * 0.05, 1e-6)
+        on_circle: list[tuple[str, float, float]] = []
+        for name, (x, y) in point_map.items():
+            if name == center_name:
+                continue
+            distance = math.hypot(x - cx, y - cy)
+            if abs(distance - radius) <= tolerance:
+                on_circle.append((name, x, y))
+
+        other_points = [
+            (name, x, y)
+            for name, (x, y) in point_map.items()
+            if name != center_name
+        ]
+        for _, x1, y1 in on_circle:
+            for _, x2, y2 in on_circle:
+                if x1 == x2 and y1 == y2:
+                    continue
+                if abs((x1 + x2) / 2.0 - cx) > tolerance or abs((y1 + y2) / 2.0 - cy) > tolerance:
+                    continue
+                if abs(y1 - cy) <= tolerance and abs(y2 - cy) <= tolerance:
+                    above = sum(1 for _, x, y in other_points if y > cy + tolerance)
+                    below = sum(1 for _, x, y in other_points if y < cy - tolerance)
+                    if above >= below:
+                        return "semicircle_upper"
+                    return "semicircle_lower"
+                if abs(x1 - cx) <= tolerance and abs(x2 - cx) <= tolerance:
+                    right = sum(1 for _, x, y in other_points if x > cx + tolerance)
+                    left = sum(1 for _, x, y in other_points if x < cx - tolerance)
+                    if right >= left:
+                        return "semicircle_right"
+                    return "semicircle_left"
+        return ""
 
     def _merge_point_label_annotations(self, scene: dict[str, Any]) -> None:
         points = scene.get("points")
@@ -191,12 +274,17 @@ class GeometryRenderer:
             return
 
         point_map: dict[str, dict[str, Any]] = {}
+        point_coords: dict[str, tuple[float, float]] = {}
         for entry in points:
             if not isinstance(entry, dict):
                 continue
             name = self._text_from(entry.get("name"))
             if name:
                 point_map[name] = entry
+                try:
+                    point_coords[name] = (float(entry["x"]), float(entry["y"]))
+                except (KeyError, TypeError, ValueError):
+                    pass
 
         if not point_map:
             return
@@ -215,18 +303,70 @@ class GeometryRenderer:
                 if "offset" in entry:
                     point_entry["offset"] = list(self._pair(entry.get("offset"), default=(0.12, 0.12)))
                 continue
+            if text and text in point_map and "x" in entry and "y" in entry and not self._text_from(entry.get("color")):
+                coords = point_coords.get(text)
+                if coords is not None:
+                    try:
+                        label_x = float(entry.get("x"))
+                        label_y = float(entry.get("y"))
+                    except (TypeError, ValueError):
+                        label_x = coords[0]
+                        label_y = coords[1]
+                    point_entry = point_map[text]
+                    point_entry["label"] = text
+                    point_entry["show_label"] = True
+                    point_entry["offset"] = [label_x - coords[0], label_y - coords[1]]
+                    continue
             remaining_annotations.append(entry)
 
         scene["annotations"] = remaining_annotations
 
-    def _normalize_point_aliases(self, entry: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_point_aliases(self, entry: Any) -> dict[str, Any] | Any:
+        if isinstance(entry, (list, tuple)):
+            if len(entry) >= 3:
+                name = self._text_from(entry[0])
+                try:
+                    x = float(entry[1])
+                    y = float(entry[2])
+                except (TypeError, ValueError):
+                    return entry
+                normalized = {
+                    "name": name,
+                    "x": x,
+                    "y": y,
+                }
+                if len(entry) >= 4 and self._text_from(entry[3]):
+                    normalized["label"] = self._text_from(entry[3])
+                return normalized
+            return entry
+        if not isinstance(entry, dict):
+            return entry
         normalized = dict(entry)
         name = self._text_from(normalized.get("name")) or self._text_from(normalized.get("id"))
         if name:
             normalized["name"] = name
         return normalized
 
-    def _normalize_segment_aliases(self, entry: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_segment_aliases(self, entry: Any) -> dict[str, Any] | Any:
+        if isinstance(entry, (list, tuple)):
+            if len(entry) < 2:
+                return entry
+            normalized: dict[str, Any] = {
+                "from": self._text_from(entry[0]),
+                "to": self._text_from(entry[1]),
+            }
+            if len(entry) >= 3:
+                third = self._text_from(entry[2])
+                style_name = self._text_from(self._normalize_style_alias_value(third)).lower()
+                if style_name in {"primary", "auxiliary", "highlight", "subtle"}:
+                    normalized["style"] = style_name
+                elif third:
+                    normalized["label"] = third
+            if len(entry) >= 4 and self._text_from(entry[3]):
+                normalized["label"] = self._text_from(entry[3])
+            return normalized
+        if not isinstance(entry, dict):
+            return entry
         normalized = dict(entry)
         from_name = (
             self._text_from(normalized.get("from"))
@@ -245,7 +385,18 @@ class GeometryRenderer:
         normalized["style"] = self._normalize_style_alias_value(normalized.get("style"))
         return normalized
 
-    def _normalize_line_aliases(self, entry: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_line_aliases(self, entry: Any) -> dict[str, Any] | Any:
+        if isinstance(entry, (list, tuple)):
+            if len(entry) < 2:
+                return entry
+            normalized: dict[str, Any] = {
+                "through": [self._text_from(entry[0]), self._text_from(entry[1])],
+            }
+            if len(entry) >= 3:
+                normalized["style"] = self._normalize_style_alias_value(entry[2])
+            return normalized
+        if not isinstance(entry, dict):
+            return entry
         normalized = dict(entry)
         through = normalized.get("through")
         if not isinstance(through, list):
@@ -255,7 +406,19 @@ class GeometryRenderer:
         normalized["style"] = self._normalize_style_alias_value(normalized.get("style"))
         return normalized
 
-    def _normalize_ray_aliases(self, entry: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_ray_aliases(self, entry: Any) -> dict[str, Any] | Any:
+        if isinstance(entry, (list, tuple)):
+            if len(entry) < 2:
+                return entry
+            normalized: dict[str, Any] = {
+                "from": self._text_from(entry[0]),
+                "to": self._text_from(entry[1]),
+            }
+            if len(entry) >= 3:
+                normalized["style"] = self._normalize_style_alias_value(entry[2])
+            return normalized
+        if not isinstance(entry, dict):
+            return entry
         normalized = dict(entry)
         from_name = (
             self._text_from(normalized.get("from"))
@@ -274,7 +437,36 @@ class GeometryRenderer:
         normalized["style"] = self._normalize_style_alias_value(normalized.get("style"))
         return normalized
 
-    def _normalize_circle_aliases(self, entry: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_circle_aliases(self, entry: Any) -> dict[str, Any] | Any:
+        if isinstance(entry, (list, tuple)):
+            if len(entry) < 2:
+                return entry
+            normalized: dict[str, Any] = {
+                "center": self._text_from(entry[0]),
+                "_compact_array": True,
+            }
+            second = entry[1]
+            if isinstance(second, (int, float)):
+                normalized["radius"] = float(second)
+            else:
+                second_text = self._text_from(second)
+                try:
+                    normalized["radius"] = float(second_text)
+                except (TypeError, ValueError):
+                    if second_text:
+                        normalized["through"] = second_text
+            if len(entry) >= 3 and self._text_from(entry[2]):
+                third = self._text_from(entry[2])
+                if third.lower().startswith("semicircle"):
+                    normalized["type"] = third.lower()
+                    normalized["style"] = "primary"
+                else:
+                    normalized["style"] = self._normalize_style_alias_value(third)
+            if len(entry) >= 4 and self._text_from(entry[3]):
+                normalized["orientation"] = self._text_from(entry[3])
+            entry = normalized
+        if not isinstance(entry, dict):
+            return entry
         normalized = dict(entry)
         circle_type = self._text_from(normalized.get("type")).lower()
         raw_style = self._text_from(normalized.get("style")).lower()
@@ -307,7 +499,11 @@ class GeometryRenderer:
             normalized["type"] = orientation_map.get(orientation, "semicircle_upper")
         return normalized
 
-    def _normalize_polygon_aliases(self, entry: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_polygon_aliases(self, entry: Any) -> dict[str, Any] | Any:
+        if isinstance(entry, (list, tuple)) and entry and all(isinstance(item, str) for item in entry):
+            return {"points": [self._text_from(item) for item in entry]}
+        if not isinstance(entry, dict):
+            return entry
         normalized = dict(entry)
         if not isinstance(normalized.get("points"), list):
             vertices = normalized.get("vertices")
@@ -316,7 +512,22 @@ class GeometryRenderer:
         normalized["style"] = self._normalize_style_alias_value(normalized.get("style"))
         return normalized
 
-    def _normalize_angle_mark_aliases(self, entry: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_angle_mark_aliases(self, entry: Any) -> dict[str, Any] | Any:
+        if isinstance(entry, (list, tuple)):
+            if len(entry) < 3:
+                return entry
+            normalized: dict[str, Any] = {
+                "vertex": self._text_from(entry[0]),
+                "from": self._text_from(entry[1]),
+                "to": self._text_from(entry[2]),
+            }
+            if len(entry) >= 4 and self._text_from(entry[3]):
+                normalized["label"] = self._text_from(entry[3])
+                if "90" in normalized["label"]:
+                    normalized["right_angle"] = True
+            return normalized
+        if not isinstance(entry, dict):
+            return entry
         normalized = dict(entry)
         vertex = self._text_from(normalized.get("vertex")) or self._text_from(normalized.get("at"))
         if vertex:
@@ -343,7 +554,30 @@ class GeometryRenderer:
         normalized["style"] = self._normalize_style_alias_value(normalized.get("style"))
         return normalized
 
-    def _normalize_annotation_aliases(self, entry: dict[str, Any]) -> dict[str, Any]:
+    def _normalize_annotation_aliases(self, entry: Any) -> dict[str, Any] | Any:
+        if isinstance(entry, (list, tuple)):
+            if len(entry) >= 3:
+                text = self._text_from(entry[0])
+                try:
+                    x = float(entry[1])
+                    y = float(entry[2])
+                except (TypeError, ValueError):
+                    normalized = {
+                        "text": text,
+                        "at": self._text_from(entry[1]),
+                    }
+                    if len(entry) >= 4:
+                        normalized["offset"] = list(self._pair(entry[2:4], default=(0.0, 0.0)))
+                    return normalized
+                return {"text": text, "x": x, "y": y}
+            if len(entry) == 2:
+                return {
+                    "text": self._text_from(entry[0]),
+                    "at": self._text_from(entry[1]),
+                }
+            return entry
+        if not isinstance(entry, dict):
+            return entry
         normalized = dict(entry)
         if not self._text_from(normalized.get("text")):
             label = self._text_from(normalized.get("label"))
@@ -1413,6 +1647,14 @@ class GeometryRenderer:
             return ""
         if "$" in candidate:
             return candidate
+        candidate = re.sub(r"√\(([^()]+)\)", r"\\sqrt{\1}", candidate)
+        candidate = re.sub(r"√([A-Za-z0-9]+)", r"\\sqrt{\1}", candidate)
+        candidate = (
+            candidate.replace("≥", r"\geq ")
+            .replace("≤", r"\leq ")
+            .replace("≠", r"\neq ")
+            .replace("≈", r"\approx ")
+        ).strip()
         if any(token in candidate for token in ("\\", "^", "_", "{", "}")):
             return f"${candidate}$"
         return candidate

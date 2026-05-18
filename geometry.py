@@ -181,7 +181,43 @@ class GeometryRenderer:
                 normalizer(entry) if isinstance(entry, dict) else entry
                 for entry in value
             ]
+        self._merge_point_label_annotations(normalized)
         return normalized
+
+    def _merge_point_label_annotations(self, scene: dict[str, Any]) -> None:
+        points = scene.get("points")
+        annotations = scene.get("annotations")
+        if not isinstance(points, list) or not isinstance(annotations, list):
+            return
+
+        point_map: dict[str, dict[str, Any]] = {}
+        for entry in points:
+            if not isinstance(entry, dict):
+                continue
+            name = self._text_from(entry.get("name"))
+            if name:
+                point_map[name] = entry
+
+        if not point_map:
+            return
+
+        remaining_annotations: list[Any] = []
+        for entry in annotations:
+            if not isinstance(entry, dict):
+                remaining_annotations.append(entry)
+                continue
+            at_name = self._text_from(entry.get("at"))
+            text = self._text_from(entry.get("text"))
+            if at_name and text and at_name in point_map and not self._text_from(entry.get("color")):
+                point_entry = point_map[at_name]
+                point_entry["label"] = text
+                point_entry["show_label"] = True
+                if "offset" in entry:
+                    point_entry["offset"] = list(self._pair(entry.get("offset"), default=(0.12, 0.12)))
+                continue
+            remaining_annotations.append(entry)
+
+        scene["annotations"] = remaining_annotations
 
     def _normalize_point_aliases(self, entry: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(entry)
@@ -240,9 +276,23 @@ class GeometryRenderer:
 
     def _normalize_circle_aliases(self, entry: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(entry)
-        normalized["style"] = self._normalize_style_alias_value(normalized.get("style"))
         circle_type = self._text_from(normalized.get("type")).lower()
+        raw_style = self._text_from(normalized.get("style")).lower()
         orientation = self._text_from(normalized.get("orientation")).lower()
+        style_type_map = {
+            "semicircle": "semicircle_upper",
+            "semicircle_upper": "semicircle_upper",
+            "semicircle_lower": "semicircle_lower",
+            "semicircle_left": "semicircle_left",
+            "semicircle_right": "semicircle_right",
+        }
+        if not circle_type and raw_style in style_type_map:
+            circle_type = style_type_map[raw_style]
+            normalized["type"] = circle_type
+            normalized["style"] = "primary"
+        else:
+            normalized["style"] = self._normalize_style_alias_value(normalized.get("style"))
+
         if circle_type == "semicircle":
             orientation_map = {
                 "above": "semicircle_upper",
@@ -295,9 +345,23 @@ class GeometryRenderer:
 
     def _normalize_annotation_aliases(self, entry: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(entry)
-        at_name = self._text_from(normalized.get("at")) or self._text_from(normalized.get("point"))
+        if not self._text_from(normalized.get("text")):
+            label = self._text_from(normalized.get("label"))
+            if label:
+                normalized["text"] = label
+
+        at_name = self._text_from(normalized.get("at"))
+        point_value = normalized.get("point")
+        if not at_name and isinstance(point_value, str):
+            at_name = self._text_from(point_value)
         if at_name:
             normalized["at"] = at_name
+        elif isinstance(point_value, (list, tuple)) and len(point_value) == 2:
+            try:
+                normalized["x"] = float(point_value[0])
+                normalized["y"] = float(point_value[1])
+            except (TypeError, ValueError):
+                pass
         return normalized
 
     def _arm_point_name(self, value: Any) -> str:

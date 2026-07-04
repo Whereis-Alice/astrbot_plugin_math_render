@@ -208,6 +208,24 @@
     "default": false,
     "hint": "开启后会把表达式转换、提示注入、渲染后端选择、几何出图等细节写入 AstrBot 日志。"
   },
+  "send_image_max_bytes": {
+    "type": "int",
+    "description": "发送前图片最大字节数",
+    "default": 7500000,
+    "hint": "超过该大小时会先压缩再发送，减少 OneBot/QQ 图片消息静默失败的概率。"
+  },
+  "send_image_max_side": {
+    "type": "int",
+    "description": "发送前图片最大边长",
+    "default": 4096,
+    "hint": "生成图任意一边超过该像素值时会等比缩小。"
+  },
+  "send_image_jpeg_quality": {
+    "type": "int",
+    "description": "发送前 JPEG 兜底压缩质量",
+    "default": 92,
+    "hint": "PNG 优化后仍过大时会转为 JPEG，此项控制 JPEG 质量。"
+  },
   "local_browser_executable": {
     "type": "string",
     "description": "本地浏览器可执行文件路径",

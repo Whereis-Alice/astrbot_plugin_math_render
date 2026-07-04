@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import base64
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 from astrbot.api import AstrBotConfig, logger
@@ -356,7 +358,7 @@ class MathRenderPlugin(Star):
             yield event.plain_result(f"公式渲染失败: {exc}")
             return
 
-        yield event.image_result(str(image_path))
+        yield self._image_result_for_send(event, image_path)
 
     @filter.command("mathsolveimg", alias=["解答渲染", "数学出图", "题目出图"])
     async def mathsolveimg(self, event: AstrMessageEvent):
@@ -378,7 +380,7 @@ class MathRenderPlugin(Star):
             yield event.plain_result(f"解答出图失败: {exc}")
             return
 
-        yield event.image_result(str(image_path))
+        yield self._image_result_for_send(event, image_path)
 
     @filter.command("plot", alias=["mathplot", "functionplot"])
     async def plot(self, event: AstrMessageEvent):
@@ -403,7 +405,7 @@ class MathRenderPlugin(Star):
             logger.exception("plot command failed")
             yield event.plain_result(f"绘图失败: {exc}")
             return
-        yield event.image_result(str(result.path))
+        yield self._image_result_for_send(event, result.path)
 
     @filter.command("plot3d", alias=["surfaceplot"])
     async def plot3d(self, event: AstrMessageEvent):
@@ -417,7 +419,7 @@ class MathRenderPlugin(Star):
             logger.exception("plot3d command failed")
             yield event.plain_result(f"三维绘图失败: {exc}")
             return
-        yield event.image_result(str(result.path))
+        yield self._image_result_for_send(event, result.path)
 
     @filter.command("polar", alias=["polarplot"])
     async def polar(self, event: AstrMessageEvent):
@@ -431,7 +433,7 @@ class MathRenderPlugin(Star):
             logger.exception("polar command failed")
             yield event.plain_result(f"极坐标绘图失败: {exc}")
             return
-        yield event.image_result(str(result.path))
+        yield self._image_result_for_send(event, result.path)
 
     @filter.command("parametric", alias=["paramplot"])
     async def parametric(self, event: AstrMessageEvent):
@@ -446,7 +448,7 @@ class MathRenderPlugin(Star):
             logger.exception("parametric command failed")
             yield event.plain_result(f"参数曲线绘图失败: {exc}")
             return
-        yield event.image_result(str(result.path))
+        yield self._image_result_for_send(event, result.path)
 
     @filter.command("vector2d", alias=["vectorfield"])
     async def vector2d(self, event: AstrMessageEvent):
@@ -461,7 +463,7 @@ class MathRenderPlugin(Star):
             logger.exception("vector2d command failed")
             yield event.plain_result(f"向量场绘图失败: {exc}")
             return
-        yield event.image_result(str(result.path))
+        yield self._image_result_for_send(event, result.path)
 
     @filter.command("parametric3d", alias=["param3d"])
     async def parametric3d(self, event: AstrMessageEvent):
@@ -478,7 +480,7 @@ class MathRenderPlugin(Star):
             logger.exception("parametric3d command failed")
             yield event.plain_result(f"三维参数曲线绘图失败: {exc}")
             return
-        yield event.image_result(str(result.path))
+        yield self._image_result_for_send(event, result.path)
 
     @filter.command("plotstatus")
     async def plotstatus(self, event: AstrMessageEvent):
@@ -522,7 +524,7 @@ class MathRenderPlugin(Star):
             accent_color=accent_color or self._text("default_accent_color", ""),
         )
         self._debug("llm tool render_latex_formula sent image=%s", image_path)
-        yield event.image_result(str(image_path))
+        yield self._image_result_for_send(event, image_path)
         yield "The rendered math formula image has been sent to the user. Keep any follow-up text brief."
 
     @filter.llm_tool(name="render_math_solution_card")
@@ -600,7 +602,7 @@ class MathRenderPlugin(Star):
         content = await self._materialize_plot_for_card(content)
         image_path = await self.renderer.render_solution_card(content)
         self._debug("llm tool render_math_solution_card sent image=%s", image_path)
-        yield event.image_result(str(image_path))
+        yield self._image_result_for_send(event, image_path)
         yield "The rendered math solution card has been sent to the user. Keep follow-up text concise and avoid repeating the full answer."
 
     @filter.llm_tool(name="plot_function")
@@ -634,7 +636,7 @@ class MathRenderPlugin(Star):
             logger.exception("plot_function tool failed")
             yield f"Plot failed: {exc}"
             return
-        yield event.image_result(str(result.path))
+        yield self._image_result_for_send(event, result.path)
         yield result.description
 
     @filter.llm_tool(name="plot_multiple")
@@ -668,7 +670,7 @@ class MathRenderPlugin(Star):
             logger.exception("plot_multiple tool failed")
             yield f"Plot failed: {exc}"
             return
-        yield event.image_result(str(result.path))
+        yield self._image_result_for_send(event, result.path)
         yield result.description
 
     @filter.llm_tool(name="plot_implicit")
@@ -705,7 +707,7 @@ class MathRenderPlugin(Star):
             logger.exception("plot_implicit tool failed")
             yield f"Plot failed: {exc}"
             return
-        yield event.image_result(str(result.path))
+        yield self._image_result_for_send(event, result.path)
         yield result.description
 
     @filter.llm_tool(name="plot_polar")
@@ -729,7 +731,7 @@ class MathRenderPlugin(Star):
             logger.exception("plot_polar tool failed")
             yield f"Plot failed: {exc}"
             return
-        yield event.image_result(str(result.path))
+        yield self._image_result_for_send(event, result.path)
         yield result.description
 
     @filter.llm_tool(name="plot_parametric")
@@ -766,7 +768,7 @@ class MathRenderPlugin(Star):
             logger.exception("plot_parametric tool failed")
             yield f"Plot failed: {exc}"
             return
-        yield event.image_result(str(result.path))
+        yield self._image_result_for_send(event, result.path)
         yield result.description
 
     @filter.llm_tool(name="plot_3d_function")
@@ -806,7 +808,7 @@ class MathRenderPlugin(Star):
             logger.exception("plot_3d_function tool failed")
             yield f"Plot failed: {exc}"
             return
-        yield event.image_result(str(result.path))
+        yield self._image_result_for_send(event, result.path)
         yield result.description
 
     @filter.llm_tool(name="plot_3d_parametric")
@@ -849,7 +851,7 @@ class MathRenderPlugin(Star):
             logger.exception("plot_3d_parametric tool failed")
             yield f"Plot failed: {exc}"
             return
-        yield event.image_result(str(result.path))
+        yield self._image_result_for_send(event, result.path)
         yield result.description
 
     @filter.llm_tool(name="plot_vector_field_2d")
@@ -889,7 +891,7 @@ class MathRenderPlugin(Star):
             logger.exception("plot_vector_field_2d tool failed")
             yield f"Plot failed: {exc}"
             return
-        yield event.image_result(str(result.path))
+        yield self._image_result_for_send(event, result.path)
         yield result.description
 
     async def _solve_question(self, event: AstrMessageEvent, question: str) -> SolutionCardContent:
@@ -1093,6 +1095,92 @@ class MathRenderPlugin(Star):
         except Exception as exc:
             self._debug("failed to resolve current provider: %s", exc)
             return None
+
+    def _image_result_for_send(self, event: AstrMessageEvent, image_path: str | Path):
+        prepared_path = self._prepare_image_for_send(Path(image_path))
+        if prepared_path is None:
+            return event.plain_result("图片已经生成，但发送前找不到图片文件；请查看 AstrBot 日志。")
+
+        data = prepared_path.read_bytes()
+        encoded = base64.b64encode(data).decode("ascii")
+        self._debug(
+            "image send payload prepared path=%s bytes=%s base64_chars=%s",
+            prepared_path,
+            len(data),
+            len(encoded),
+        )
+        return event.make_result().base64_image(encoded)
+
+    def _prepare_image_for_send(self, image_path: Path) -> Path | None:
+        if not image_path.exists():
+            logger.error("math_render image send failed: file does not exist: %s", image_path)
+            return None
+
+        try:
+            from PIL import Image as PILImage
+        except ImportError:
+            size = image_path.stat().st_size
+            self._debug("image send without PIL path=%s bytes=%s", image_path, size)
+            return image_path
+
+        max_bytes = max(self._int("send_image_max_bytes", 7_500_000), 200_000)
+        max_side = max(self._int("send_image_max_side", 4096), 512)
+        jpeg_quality = min(max(self._int("send_image_jpeg_quality", 92), 50), 98)
+
+        try:
+            with PILImage.open(image_path) as image:
+                width, height = image.size
+                size = image_path.stat().st_size
+                self._debug(
+                    "image send inspect path=%s bytes=%s width=%s height=%s",
+                    image_path,
+                    size,
+                    width,
+                    height,
+                )
+                if size <= max_bytes and max(width, height) <= max_side:
+                    return image_path
+
+                scale = min(max_side / max(width, height), 1.0)
+                next_width = max(int(width * scale), 1)
+                next_height = max(int(height * scale), 1)
+                resized = image
+                if scale < 1.0:
+                    resized = image.resize((next_width, next_height), PILImage.Resampling.LANCZOS)
+
+                png_path = image_path.with_name(f"{image_path.stem}_send.png")
+                resized.save(png_path, format="PNG", optimize=True)
+                png_size = png_path.stat().st_size
+                if png_size <= max_bytes:
+                    self._debug(
+                        "image send compressed png path=%s bytes=%s width=%s height=%s",
+                        png_path,
+                        png_size,
+                        next_width,
+                        next_height,
+                    )
+                    return png_path
+
+                jpg_path = image_path.with_name(f"{image_path.stem}_send.jpg")
+                rgb = PILImage.new("RGB", resized.size, "white")
+                if resized.mode == "RGBA":
+                    rgb.paste(resized, mask=resized.getchannel("A"))
+                else:
+                    rgb.paste(resized.convert("RGB"))
+                rgb.save(jpg_path, format="JPEG", quality=jpeg_quality, optimize=True)
+                self._debug(
+                    "image send compressed jpeg path=%s bytes=%s width=%s height=%s quality=%s",
+                    jpg_path,
+                    jpg_path.stat().st_size,
+                    next_width,
+                    next_height,
+                    jpeg_quality,
+                )
+                return jpg_path
+        except Exception as exc:
+            logger.exception("math_render image send preparation failed: %s", image_path)
+            self._debug("image send preparation failed: %s", exc)
+            return image_path
 
     def _apply_prompt_template(self, template: str, **values: str) -> str:
         rendered = template or ""

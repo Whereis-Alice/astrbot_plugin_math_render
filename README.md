@@ -483,3 +483,13 @@ LLM 主动调用时推荐使用 `plot_spec_json`：
 - `plot_section_position`
 - `plot_caption_enabled`
 - `plot_auto_caption_enabled`
+
+## 图片发送排障
+
+如果日志显示图卡已经渲染完成，但 QQ/OneBot 端没有看到图片，通常是生成图过大或平台端不接受本地图片路径。插件会在发送前自动检查并压缩图片，然后用 base64 图片组件发送；开启 `debug_logging_enabled` 后可以在日志里看到发送前的图片路径、字节数、分辨率和压缩结果。
+
+相关配置：
+
+- `send_image_max_bytes`
+- `send_image_max_side`
+- `send_image_jpeg_quality`

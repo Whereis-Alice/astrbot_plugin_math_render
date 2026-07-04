@@ -163,7 +163,10 @@ class GeometryRenderer:
 
     def _normalize_scene_aliases(self, scene: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(scene)
-        collection_normalizers: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
+        if "points" in normalized:
+            normalized["points"] = self._normalize_points_collection(normalized.get("points"))
+
+        collection_normalizers: dict[str, Callable[[Any], dict[str, Any] | Any]] = {
             "points": self._normalize_point_aliases,
             "segments": self._normalize_segment_aliases,
             "lines": self._normalize_line_aliases,
@@ -187,6 +190,61 @@ class GeometryRenderer:
         self._infer_compact_circle_types(normalized)
         self._merge_point_label_annotations(normalized)
         return normalized
+
+    def _normalize_points_collection(self, value: Any) -> Any:
+        if not isinstance(value, dict):
+            return value
+
+        points: list[Any] = []
+        for raw_name, raw_payload in value.items():
+            name = self._text_from(raw_name)
+            if not name:
+                points.append(raw_payload)
+                continue
+
+            if isinstance(raw_payload, dict):
+                entry = dict(raw_payload)
+                entry.setdefault("name", name)
+                coords = (
+                    entry.get("coords")
+                    or entry.get("coord")
+                    or entry.get("coordinate")
+                    or entry.get("coordinates")
+                    or entry.get("position")
+                    or entry.get("pos")
+                )
+                if "x" not in entry or "y" not in entry:
+                    xy = self._coords_from_point_map_payload(coords)
+                    if xy is not None:
+                        entry["x"] = xy[0]
+                        entry["y"] = xy[1]
+                points.append(entry)
+                continue
+
+            xy = self._coords_from_point_map_payload(raw_payload)
+            if xy is None:
+                points.append(raw_payload)
+                continue
+
+            entry = {
+                "name": name,
+                "x": xy[0],
+                "y": xy[1],
+            }
+            if isinstance(raw_payload, list) and len(raw_payload) >= 3:
+                label = self._text_from(raw_payload[2])
+                if label:
+                    entry["label"] = label
+            points.append(entry)
+        return points
+
+    def _coords_from_point_map_payload(self, value: Any) -> tuple[float, float] | None:
+        if isinstance(value, (list, tuple)) and len(value) >= 2:
+            try:
+                return (float(value[0]), float(value[1]))
+            except (TypeError, ValueError):
+                return None
+        return self._point_coords_from_value(value, {})
 
     def _coerce_misplaced_line_entries(self, scene: dict[str, Any]) -> None:
         lines = scene.get("lines")
@@ -1128,6 +1186,11 @@ class GeometryRenderer:
             normalized["right_angle"] = True
         if label and "90" in label:
             normalized["right_angle"] = True
+        if "radius" not in normalized and "size" in normalized:
+            try:
+                normalized["radius"] = float(normalized.get("size"))
+            except (TypeError, ValueError):
+                pass
         normalized["style"] = self._normalize_style_alias_value(normalized.get("style"))
         return normalized
 
@@ -1168,6 +1231,16 @@ class GeometryRenderer:
             normalized["y"] = at_coords[1]
             normalized.pop("at", None)
             return normalized
+
+        if "x" not in normalized or "y" not in normalized:
+            position_value = normalized.get("position", normalized.get("pos"))
+            position_coords = self._point_coords_from_value(position_value, {})
+            if position_coords is not None:
+                normalized["x"] = position_coords[0]
+                normalized["y"] = position_coords[1]
+                normalized.pop("position", None)
+                normalized.pop("pos", None)
+                return normalized
 
         at_name = self._text_from(at_value)
         point_value = normalized.get("point")

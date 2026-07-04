@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.4.2] - 2026-07-05
+
+### Fixed
+
+- 修复 LLM 把 `geometry_scene_json.points` 写成对象映射（如 `{"A": [-5, 0]}`）时几何图被跳过的问题；现在会自动归一化为点数组，并兼容 `angle_marks[].size` 与 `annotations[].position` 等常见写法。
+
 ## [v0.4.1] - 2026-07-05
 
 ### Fixed

@@ -178,6 +178,68 @@ class GeometryAliasCompatibilityTests(unittest.TestCase):
         self.assertTrue(result.path.exists())
         self.assertGreater(result.path.stat().st_size, 0)
 
+    def test_points_object_map_and_angle_size_render(self) -> None:
+        scene = {
+            "points": {
+                "A": [-5, 0],
+                "B": [5, 0],
+                "O": [0, 0],
+                "P": [-1, 0],
+                "C": [-1, 4.899],
+            },
+            "segments": [
+                {"from": "A", "to": "B"},
+                {"from": "P", "to": "C"},
+                {"from": "O", "to": "C", "style": "dashed"},
+            ],
+            "circles": [
+                {"center": "O", "radius": 5, "type": "semicircle_upper"},
+            ],
+            "angle_marks": [
+                {"from": "C", "vertex": "P", "to": "B", "size": 0.4},
+            ],
+        }
+
+        normalized = self.renderer.parse_scene(scene)
+
+        self.assertEqual(normalized["points"][0]["name"], "A")
+        self.assertEqual(normalized["points"][0]["x"], -5.0)
+        self.assertEqual(normalized["angle_marks"][0]["radius"], 0.4)
+
+        result = self.renderer.render_scene(scene)
+        self.assertTrue(result.path.exists())
+        self.assertGreater(result.path.stat().st_size, 0)
+
+    def test_point_map_metadata_and_annotation_position_render(self) -> None:
+        scene = {
+            "points": {
+                "A": {"position": [0, 0], "label_position": "bottom_left"},
+                "B": {"x": 6, "y": 0, "label_position": "bottom_right"},
+                "C": {"coords": [3, 4], "label": "top"},
+            },
+            "segments": [
+                {"from": "A", "to": "B"},
+                {"from": "A", "to": "C"},
+                {"from": "B", "to": "C"},
+            ],
+            "annotations": [
+                {"position": [3, -0.4], "text": "base"},
+            ],
+        }
+
+        normalized = self.renderer.parse_scene(scene)
+        point_map = {entry["name"]: entry for entry in normalized["points"]}
+
+        self.assertEqual(point_map["A"]["x"], 0.0)
+        self.assertEqual(point_map["A"]["y"], 0.0)
+        self.assertEqual(point_map["C"]["label"], "top")
+        self.assertEqual(normalized["annotations"][0]["x"], 3.0)
+        self.assertEqual(normalized["annotations"][0]["y"], -0.4)
+
+        result = self.renderer.render_scene(scene)
+        self.assertTrue(result.path.exists())
+        self.assertGreater(result.path.stat().st_size, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

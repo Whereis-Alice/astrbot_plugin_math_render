@@ -550,10 +550,53 @@
     "default": "When the user asks to draw or compare math functions, curves, implicit equations, polar curves, parametric curves, 3D surfaces, or 2D vector fields, you can call the plotting tools from this plugin. Available tools: plot_function, plot_multiple, plot_implicit, plot_polar, plot_parametric, plot_3d_function, plot_3d_parametric, plot_vector_field_2d.",
     "hint": "Injected only when plot intent is detected and plot_tool_prompt_enabled is true."
   },
+  "plot_in_solution_card_enabled": {
+    "type": "bool",
+    "description": "Embed generated plots in solution cards",
+    "default": true,
+    "hint": "When a solution contains plot_spec_json or the manual solver returns plot_spec, render the plot and place it inside the same answer card."
+  },
+  "plot_solution_card_prompt": {
+    "type": "text",
+    "description": "LLM prompt for embedding plots in solution cards",
+    "default": "render_math_solution_card can embed a generated plot inside the same solution card. For math questions that benefit from a graph, prefer one render_math_solution_card call with plot_spec_json instead of sending a separate plot. plot_spec_json supports kinds: function, multiple, implicit, polar, parametric, surface, parametric3d, vector_field_2d.",
+    "hint": "Injected for math or graphing requests so the model knows how to combine the plot with the answer card."
+  },
+  "plot_solver_prompt": {
+    "type": "text",
+    "description": "Manual solver plot_spec prompt override",
+    "default": "",
+    "hint": "Optional override for /mathsolveimg. Leave empty to use the built-in plot_spec schema prompt."
+  },
+  "plot_section_label": {
+    "type": "string",
+    "description": "Embedded plot section label",
+    "default": "函数图像",
+    "hint": "Small label shown above the plot when it is embedded in a solution card."
+  },
+  "plot_section_position": {
+    "type": "string",
+    "description": "Embedded plot position in solution cards",
+    "default": "after_key_formula",
+    "options": ["before_content", "after_question", "after_key_formula", "before_answer", "after_answer", "after_steps", "after_final_answer", "after_content"],
+    "hint": "Controls where generated plots are placed when plot_position is not provided."
+  },
+  "plot_caption_enabled": {
+    "type": "bool",
+    "description": "Show embedded plot captions",
+    "default": true,
+    "hint": "When enabled, plot_caption or the auto-generated plotting description is shown below the embedded plot."
+  },
+  "plot_auto_caption_enabled": {
+    "type": "bool",
+    "description": "Use plot result descriptions as captions",
+    "default": true,
+    "hint": "If plot_caption is empty, use the plotting service description as the embedded plot caption."
+  },
   "plot_keywords": {
     "type": "text",
     "description": "Plot intent keywords",
-    "default": "plot\ngraph\ncurve\nsurface\npolar\nparametric\nvector field\nfunction graph\nfunction plot",
+    "default": "画图\n绘图\n图像\n函数图像\n函数作图\n曲线\n曲面\n极坐标\n参数方程\n参数曲线\n向量场\nplot\ngraph\ncurve\nsurface\npolar\nparametric\nvector field\nfunction graph\nfunction plot",
     "hint": "One keyword per line. Used to decide when to inject plot tool guidance."
   },
   "plot_dpi": {

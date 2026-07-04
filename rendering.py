@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import html
 import json
@@ -104,6 +105,10 @@ class SolutionCardContent:
     geometry_scene: dict[str, Any] | None = None
     geometry_caption: str = ""
     geometry_position: str = ""
+    plot_spec: dict[str, Any] | None = None
+    plot_image_path: str = ""
+    plot_caption: str = ""
+    plot_position: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -1144,6 +1149,10 @@ class MathRenderService:
                 "geometry_scene": content.geometry_scene,
                 "geometry_caption": content.geometry_caption,
                 "geometry_position": geometry_payload.get("geometry_position", ""),
+                "plot_spec": content.plot_spec,
+                "plot_image_path": content.plot_image_path,
+                "plot_caption": content.plot_caption,
+                "plot_position": content.plot_position,
             },
         )
         target_path = self.temp_dir / f"solution_{render_key}.png"
@@ -1170,7 +1179,7 @@ class MathRenderService:
                 "mathjax_cdn_url": self._text("mathjax_cdn_url", DEFAULT_MATHJAX_CDN),
             }
         )
-        payload.update(geometry_payload)
+        payload.update(self._prepare_plot_payload(content, geometry_payload))
         return await self._render_to_png(SOLUTION_CARD_TEMPLATE, payload, target_path)
 
     def _prepare_geometry_payload(self, content: SolutionCardContent) -> dict[str, Any]:
@@ -1219,6 +1228,42 @@ class MathRenderService:
             "geometry_caption_html": "",
             "geometry_label": self._text("geometry_section_label", DEFAULT_GEOMETRY_LABEL),
             "geometry_position": self._resolve_geometry_position(content),
+        }
+
+    def _prepare_plot_payload(
+        self,
+        content: SolutionCardContent,
+        geometry_payload: dict[str, Any],
+    ) -> dict[str, Any]:
+        if geometry_payload.get("geometry_image_data_uri"):
+            return geometry_payload
+
+        raw_path = (content.plot_image_path or "").strip()
+        if not raw_path:
+            return geometry_payload
+
+        image_path = Path(raw_path)
+        if not image_path.exists():
+            self._debug("plot image skipped because file does not exist: %s", image_path)
+            return geometry_payload
+
+        layout_mode = self._resolve_layout_mode(content)
+        configured = self._normalize_geometry_position(
+            self._text("plot_section_position", "after_key_formula"),
+            layout_mode,
+        )
+        requested = self._normalize_geometry_position(content.plot_position, layout_mode)
+        position = requested or configured or geometry_payload.get("geometry_position", "after_key_formula")
+        position = self._coerce_geometry_position(position, content, layout_mode)
+
+        caption = (content.plot_caption or "").strip()
+        return {
+            "geometry_image_data_uri": self._image_to_data_uri(image_path),
+            "geometry_caption_html": self._rich_text_to_html(caption, prefer_markdown=True)
+            if self._bool("plot_caption_enabled", True)
+            else "",
+            "geometry_label": self._text("plot_section_label", "函数图像"),
+            "geometry_position": position,
         }
 
     def _render_geometry_scene_with_fallback(
@@ -1654,6 +1699,10 @@ class MathRenderService:
     def _make_cache_key(self, prefix: str, payload: dict[str, Any]) -> str:
         raw = json.dumps({"prefix": prefix, "payload": payload}, ensure_ascii=False, sort_keys=True)
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+
+    def _image_to_data_uri(self, path: Path) -> str:
+        encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+        return f"data:image/png;base64,{encoded}"
 
     def _rich_text_to_html(self, text: str, *, prefer_markdown: bool = False) -> str:
         clean = self._normalize_rich_text(text)

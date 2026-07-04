@@ -443,3 +443,43 @@ astrbot_plugin_math_render_upload_时间戳.zip
 - `plot_3d_elev`
 - `plot_3d_azim`
 - `plot_font_family`
+
+## 解题图卡内嵌绘图
+
+当题目需要函数图像、曲线、隐式方程、极坐标、参数曲线、三维曲面或向量场辅助理解时，插件现在可以把绘图结果融合进同一张 `render_math_solution_card` 解题图卡里，而不是额外发送一张孤立的绘图图片。
+
+LLM 主动调用时推荐使用 `plot_spec_json`：
+
+```json
+{
+  "question": "求 y=x^2-4x+3 的顶点、零点，并画出图像",
+  "answer": "配方得 $y=(x-2)^2-1$，顶点为 $(2,-1)$，零点为 $x=1,3$。",
+  "key_formula": "y=(x-2)^2-1",
+  "plot_spec_json": "{\"kind\":\"function\",\"expression\":\"x^2-4*x+3\",\"x_range\":\"-1,5\",\"title\":\"y=x^2-4x+3\"}",
+  "plot_caption": "抛物线开口向上，顶点在 (2,-1)。",
+  "plot_position": "after_key_formula"
+}
+```
+
+支持的 `plot_spec_json.kind`：
+
+- `function`：一元函数 `y=f(x)`
+- `multiple`：多函数对比
+- `implicit`：隐式曲线或方程
+- `polar`：极坐标曲线
+- `parametric`：二维参数曲线
+- `surface`：三维曲面 `z=f(x,y)`
+- `parametric3d`：三维参数曲线
+- `vector_field_2d`：二维向量场
+
+`/mathsolveimg` 的手动解题流程也会收到绘图 schema 提示：如果模型判断题目确实需要图像，会返回 `plot_spec`，插件会先渲染该图，再嵌入最终解题卡。若绘图失败，插件会写入异常日志并继续生成没有绘图区域的解题卡，避免用户拿不到答案。
+
+相关配置：
+
+- `plot_in_solution_card_enabled`
+- `plot_solution_card_prompt`
+- `plot_solver_prompt`
+- `plot_section_label`
+- `plot_section_position`
+- `plot_caption_enabled`
+- `plot_auto_caption_enabled`

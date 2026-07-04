@@ -39,6 +39,62 @@ SOLVER_SYSTEM_PROMPT = """你是一名专门把数学解答整理成高质量图
 8. 默认使用简体中文。"""
 
 
+PLOT_SPEC_GUIDE = """If the problem benefits from a function graph, curve, surface, polar plot, parametric plot, implicit curve, or vector field, include a `plot_spec` object in the same JSON response so the final solution card can embed the generated plot.
+
+Supported `plot_spec` forms:
+{
+  "kind": "function",
+  "expression": "sin(x)",
+  "x_range": "-10,10",
+  "title": "y = sin(x)"
+}
+{
+  "kind": "multiple",
+  "expressions": ["sin(x)", "cos(x)"],
+  "x_range": "-10,10"
+}
+{
+  "kind": "implicit",
+  "expression": "x^2 + y^2 = 1",
+  "x_range": "-2,2",
+  "y_range": "-2,2"
+}
+{
+  "kind": "polar",
+  "expression": "sin(3*theta)",
+  "theta_range": "0,2*pi"
+}
+{
+  "kind": "parametric",
+  "x_expression": "cos(t)",
+  "y_expression": "sin(t)",
+  "t_range": "0,2*pi"
+}
+{
+  "kind": "surface",
+  "expression": "sin(sqrt(x^2+y^2))",
+  "x_range": "-6,6",
+  "y_range": "-6,6"
+}
+{
+  "kind": "parametric3d",
+  "x_expression": "cos(t)",
+  "y_expression": "sin(t)",
+  "z_expression": "t/5",
+  "t_range": "0,4*pi"
+}
+{
+  "kind": "vector_field_2d",
+  "x_expression": "-y",
+  "y_expression": "x",
+  "x_range": "-5,5",
+  "y_range": "-5,5"
+}
+
+Optional plot fields: `xlabel`, `ylabel`, `zlabel`, `plot_caption`, and `plot_position`.
+Use plot specs only when the graph materially helps the solution. Do not put prose or code in `plot_spec`; it must be plain JSON data."""
+
+
 def build_solver_prompt(
     question: str,
     *,
@@ -47,6 +103,8 @@ def build_solver_prompt(
     layout_mode: str = "auto",
     geometry_enabled: bool = False,
     geometry_prompt: str = "",
+    plot_enabled: bool = False,
+    plot_prompt: str = "",
 ) -> str:
     parts = [
         "请解答下面的数学题，并按要求整理成 JSON。",
@@ -69,6 +127,8 @@ def build_solver_prompt(
             "Use `segments` for finite edges such as AD, BD, OD, and reserve `lines` for infinite straight lines with `through`. If the figure is a semicircle, declare it explicitly with `semicircle` + `orientation` or a `semicircle_*` type instead of a full circle."
         )
     parts.append(f"题目：{question.strip()}")
+    if plot_enabled:
+        parts.append((plot_prompt or PLOT_SPEC_GUIDE).strip())
     return "\n\n".join(part for part in parts if part.strip())
 
 
@@ -92,6 +152,9 @@ def parse_solver_response(raw_text: str, question: str, *, default_style: str = 
     geometry_scene = _normalize_geometry_scene(data.get("geometry_scene") or data.get("geometry_scene_json"))
     geometry_caption = _clean_text(data.get("geometry_caption"))
     geometry_position = _clean_geometry_position(data.get("geometry_position"))
+    plot_spec = _normalize_plot_spec(data.get("plot_spec") or data.get("plot_spec_json"))
+    plot_caption = _clean_text(data.get("plot_caption"))
+    plot_position = _clean_geometry_position(data.get("plot_position"))
 
     return SolutionCardContent(
         question=question,
@@ -108,6 +171,9 @@ def parse_solver_response(raw_text: str, question: str, *, default_style: str = 
         geometry_scene=geometry_scene,
         geometry_caption=geometry_caption,
         geometry_position=geometry_position,
+        plot_spec=plot_spec,
+        plot_caption=plot_caption,
+        plot_position=plot_position,
     )
 
 
@@ -148,6 +214,24 @@ def _normalize_steps(value: Any) -> list[str]:
 
 
 def _normalize_geometry_scene(value: Any) -> dict[str, Any] | None:
+    if not value:
+        return None
+    if isinstance(value, dict):
+        return json.loads(json.dumps(value, ensure_ascii=False))
+    text = _clean_text(value)
+    if not text:
+        return None
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+def _normalize_plot_spec(value: Any) -> dict[str, Any] | None:
     if not value:
         return None
     if isinstance(value, dict):

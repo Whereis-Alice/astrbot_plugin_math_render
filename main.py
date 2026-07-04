@@ -19,7 +19,7 @@ from .conversion import (
     normalize_latex_output,
 )
 from .rendering import DEFAULT_STYLE, MathRenderService, PLUGIN_NAME, SolutionCardContent
-from .plotting import MathPlotService
+from .plotting import MathPlotService, PlotResult
 from .solving import SOLVER_SYSTEM_PROMPT, build_solver_prompt, parse_solver_response
 
 
@@ -136,6 +136,17 @@ DEFAULT_GEOMETRY_KEYWORDS = (
 )
 
 DEFAULT_PLOT_KEYWORDS = (
+    "画图",
+    "绘图",
+    "图像",
+    "函数图像",
+    "函数作图",
+    "曲线",
+    "曲面",
+    "极坐标",
+    "参数方程",
+    "参数曲线",
+    "向量场",
     "plot",
     "graph",
     "curve",
@@ -160,6 +171,22 @@ Available plotting tools:
 - `plot_vector_field_2d`: draw 2D vector fields F=(Fx(x,y), Fy(x,y)).
 
 Use formula or solution-card rendering for normal formula display or step-by-step answers. Use plotting tools when the user explicitly wants a graph, curve, surface, or vector field."""
+
+PLOT_IN_SOLUTION_CARD_PROMPT = """`render_math_solution_card` can embed a generated plot inside the same solution card.
+
+When the user asks a math question whose explanation benefits from a graph, do not send a separate plot first. Prefer one call to `render_math_solution_card` and pass `plot_spec_json` as a JSON string.
+
+Supported `plot_spec_json` examples:
+- Function: {"kind":"function","expression":"x^2-4*x+3","x_range":"-2,6","title":"Parabola"}
+- Multiple functions: {"kind":"multiple","expressions":["sin(x)","cos(x)"],"x_range":"-10,10"}
+- Implicit curve: {"kind":"implicit","expression":"x^2+y^2=1","x_range":"-2,2","y_range":"-2,2"}
+- Polar: {"kind":"polar","expression":"sin(3*theta)","theta_range":"0,2*pi"}
+- Parametric: {"kind":"parametric","x_expression":"cos(t)","y_expression":"sin(t)","t_range":"0,2*pi"}
+- Surface: {"kind":"surface","expression":"sin(sqrt(x^2+y^2))","x_range":"-6,6","y_range":"-6,6"}
+- 3D parametric: {"kind":"parametric3d","x_expression":"cos(t)","y_expression":"sin(t)","z_expression":"t/5","t_range":"0,4*pi"}
+- Vector field: {"kind":"vector_field_2d","x_expression":"-y","y_expression":"x","x_range":"-5,5","y_range":"-5,5"}
+
+Also pass `plot_caption` when a short caption helps. Use `plot_position` only when needed; valid values match geometry positions such as `after_key_formula`, `before_answer`, and `after_answer`."""
 
 AUTO_RENDER_PROMPT = """你拥有两个可用的数学渲染工具：
 1. `render_math_solution_card`：把完整数学解答渲染成高质量图片并直接发送给用户。
@@ -270,6 +297,10 @@ class MathRenderPlugin(Star):
             prompt_parts.append(AUTO_RENDER_PROMPT)
         if plot_tool_prompt_enabled and is_plot_text:
             prompt_parts.append(self._text("plot_tool_awareness_prompt", PLOT_TOOL_AWARENESS_PROMPT))
+        if self._bool("plot_in_solution_card_enabled", True) and (
+            is_math_text or is_plot_text or is_image_math_request
+        ):
+            prompt_parts.append(self._text("plot_solution_card_prompt", PLOT_IN_SOLUTION_CARD_PROMPT))
         if has_image and image_tool_prompt_enabled:
             prompt_parts.append(self._text("image_math_tool_awareness_prompt", IMAGE_MATH_TOOL_AWARENESS_PROMPT))
         if is_image_math_request:
@@ -340,6 +371,7 @@ class MathRenderPlugin(Star):
         try:
             await self._maybe_send_pre_reply(event, scene="solution", trigger="manual", original_text=question)
             content = await self._solve_question(event, question)
+            content = await self._materialize_plot_for_card(content)
             image_path = await self.renderer.render_solution_card(content)
         except Exception as exc:
             logger.exception("mathsolveimg render failed")
@@ -508,6 +540,9 @@ class MathRenderPlugin(Star):
         geometry_scene_json: str = "",
         geometry_caption: str = "",
         geometry_position: str = "",
+        plot_spec_json: str = "",
+        plot_caption: str = "",
+        plot_position: str = "",
     ):
         """Render a math answer into a high-quality image card and send it to the user.
 
@@ -523,6 +558,9 @@ class MathRenderPlugin(Star):
             geometry_scene_json(string): Optional geometry scene JSON string for triangles, circles, auxiliary lines, angle marks, and point-relation diagrams.
             geometry_caption(string): Optional caption shown below the geometry diagram.
             geometry_position(string): Optional geometry placement hint such as `before_content`, `after_question`, `after_key_formula`, `before_answer`, `after_answer`, `after_steps`, `after_final_answer`, or `after_content`.
+            plot_spec_json(string): Optional plot spec JSON string. Use it to embed a generated function graph, curve, surface, or vector field into the same solution card.
+            plot_caption(string): Optional caption shown below the embedded plot.
+            plot_position(string): Optional plot placement hint, using the same values as geometry_position.
         """
         question = question.strip()
         answer = answer.strip()
@@ -532,13 +570,16 @@ class MathRenderPlugin(Star):
         geometry_scene_json = geometry_scene_json.strip()
         geometry_caption = geometry_caption.strip()
         geometry_position = geometry_position.strip()
+        plot_spec_json = plot_spec_json.strip()
+        plot_caption = plot_caption.strip()
+        plot_position = plot_position.strip()
 
-        if not any([question, answer, key_formula, markdown_content, geometry_scene_json]):
+        if not any([question, answer, key_formula, markdown_content, geometry_scene_json, plot_spec_json]):
             raise ValueError(
-                "At least one of question, answer, key_formula, markdown_content, or geometry_scene_json must be provided."
+                "At least one of question, answer, key_formula, markdown_content, geometry_scene_json, or plot_spec_json must be provided."
             )
 
-        preview_text = question or answer or markdown_content or key_formula or geometry_caption or geometry_scene_json
+        preview_text = question or answer or markdown_content or key_formula or geometry_caption or plot_caption or geometry_scene_json or plot_spec_json
         await self._maybe_send_pre_reply(event, scene="solution", trigger="tool", original_text=preview_text)
         content = SolutionCardContent(
             question=question,
@@ -552,7 +593,11 @@ class MathRenderPlugin(Star):
             geometry_scene=self._parse_geometry_scene_json(geometry_scene_json),
             geometry_caption=geometry_caption,
             geometry_position=geometry_position,
+            plot_spec=self._parse_plot_spec_json(plot_spec_json),
+            plot_caption=plot_caption,
+            plot_position=plot_position,
         )
+        content = await self._materialize_plot_for_card(content)
         image_path = await self.renderer.render_solution_card(content)
         self._debug("llm tool render_math_solution_card sent image=%s", image_path)
         yield event.image_result(str(image_path))
@@ -863,6 +908,8 @@ class MathRenderPlugin(Star):
                 geometry_enabled=self._bool("geometry_render_enabled", True)
                 and self._bool("geometry_solver_prompt_enabled", True),
                 geometry_prompt=self._text("geometry_solver_prompt", ""),
+                plot_enabled=self._bool("plot_in_solution_card_enabled", True),
+                plot_prompt=self._text("plot_solver_prompt", ""),
             ),
             system_prompt=SOLVER_SYSTEM_PROMPT,
         )
@@ -1183,6 +1230,194 @@ class MathRenderPlugin(Star):
         if not isinstance(parsed, dict):
             raise ValueError("geometry_scene_json must decode to a JSON object.")
         return parsed
+
+    def _parse_plot_spec_json(self, raw: str) -> dict[str, Any] | None:
+        text = (raw or "").strip()
+        if not text:
+            return None
+        if text.startswith("```"):
+            text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+            text = re.sub(r"\s*```$", "", text)
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid plot_spec_json: {exc}") from exc
+        if not isinstance(parsed, dict):
+            raise ValueError("plot_spec_json must decode to a JSON object.")
+        return parsed
+
+    async def _materialize_plot_for_card(self, content: SolutionCardContent) -> SolutionCardContent:
+        if not self._bool("plot_in_solution_card_enabled", True):
+            return content
+        if not content.plot_spec or content.plot_image_path:
+            return content
+
+        try:
+            result = self._render_plot_spec(content.plot_spec)
+        except Exception as exc:
+            logger.exception("math_render solution-card plot render failed spec=%s", content.plot_spec)
+            self._debug("solution-card plot render failed: %s", exc)
+            return content
+
+        content.plot_image_path = str(result.path)
+        if not (content.plot_caption or "").strip() and self._bool("plot_auto_caption_enabled", True):
+            content.plot_caption = result.description
+        self._debug("solution-card plot materialized path=%s description=%s", result.path, result.description)
+        return content
+
+    def _render_plot_spec(self, spec: dict[str, Any]) -> PlotResult:
+        kind = self._plot_spec_text(spec, "kind", "type", "plot_type").lower().replace("-", "_")
+        kind_aliases = {
+            "single": "function",
+            "functions": "multiple",
+            "comparison": "multiple",
+            "implicit_equation": "implicit",
+            "polar_curve": "polar",
+            "parametric_curve": "parametric",
+            "surface3d": "surface",
+            "3d_surface": "surface",
+            "3d_function": "surface",
+            "function3d": "surface",
+            "parametric_3d": "parametric3d",
+            "3d_parametric": "parametric3d",
+            "vector_field": "vector_field_2d",
+            "vector2d": "vector_field_2d",
+        }
+        kind = kind_aliases.get(kind, kind)
+        if not kind:
+            kind = self._infer_plot_kind(spec)
+
+        expression = self._plot_spec_text(spec, "expression", "equation", "expr", "formula")
+        title = self._plot_spec_text(spec, "title")
+        xlabel = self._plot_spec_text(spec, "xlabel", "x_label")
+        ylabel = self._plot_spec_text(spec, "ylabel", "y_label")
+        zlabel = self._plot_spec_text(spec, "zlabel", "z_label")
+        x_range = self._plot_spec_text(spec, "x_range", "xrange")
+        y_range = self._plot_spec_text(spec, "y_range", "yrange")
+        t_range = self._plot_spec_text(spec, "t_range", "trange")
+        theta_range = self._plot_spec_text(spec, "theta_range", "thetarange")
+
+        if kind == "function":
+            expression = self._strip_equation_lhs(expression, allowed_lhs=("y", "f(x)"))
+            return self.plotter.plot_function(
+                expression,
+                x_range=x_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+            )
+        if kind == "multiple":
+            expressions = self._plot_spec_expressions(spec)
+            return self.plotter.plot_multiple(
+                expressions,
+                x_range=x_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+            )
+        if kind == "implicit":
+            return self.plotter.plot_implicit(
+                expression,
+                x_range=x_range,
+                y_range=y_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+            )
+        if kind == "polar":
+            return self.plotter.plot_polar(
+                expression,
+                theta_range=theta_range,
+                title=title,
+            )
+        if kind == "parametric":
+            return self.plotter.plot_parametric(
+                self._strip_equation_lhs(self._plot_spec_text(spec, "x_expression", "x_expr", "x"), allowed_lhs=("x", "x(t)")),
+                self._strip_equation_lhs(self._plot_spec_text(spec, "y_expression", "y_expr", "y"), allowed_lhs=("y", "y(t)")),
+                t_range=t_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+            )
+        if kind == "surface":
+            expression = self._strip_equation_lhs(expression, allowed_lhs=("z", "z(x,y)", "f(x,y)"))
+            return self.plotter.plot_surface(
+                expression,
+                x_range=x_range,
+                y_range=y_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+                zlabel=zlabel,
+            )
+        if kind == "parametric3d":
+            return self.plotter.plot_parametric_3d(
+                self._strip_equation_lhs(self._plot_spec_text(spec, "x_expression", "x_expr", "x"), allowed_lhs=("x", "x(t)")),
+                self._strip_equation_lhs(self._plot_spec_text(spec, "y_expression", "y_expr", "y"), allowed_lhs=("y", "y(t)")),
+                self._strip_equation_lhs(self._plot_spec_text(spec, "z_expression", "z_expr", "z"), allowed_lhs=("z", "z(t)")),
+                t_range=t_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+                zlabel=zlabel,
+            )
+        if kind == "vector_field_2d":
+            return self.plotter.plot_vector_field_2d(
+                self._plot_spec_text(spec, "x_expression", "fx", "u", "dx"),
+                self._plot_spec_text(spec, "y_expression", "fy", "v", "dy"),
+                x_range=x_range,
+                y_range=y_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+            )
+
+        raise ValueError(f"Unsupported plot_spec kind: {kind or '<empty>'}")
+
+    def _infer_plot_kind(self, spec: dict[str, Any]) -> str:
+        if spec.get("expressions"):
+            return "multiple"
+        if spec.get("z_expression") or spec.get("z_expr"):
+            return "parametric3d"
+        if (spec.get("x_expression") or spec.get("x_expr")) and (spec.get("y_expression") or spec.get("y_expr")):
+            return "parametric"
+        expression = self._plot_spec_text(spec, "expression", "equation", "expr", "formula")
+        if "theta" in expression or spec.get("theta_range"):
+            return "polar"
+        if "=" in expression and not re.match(r"^\s*y\s*=", expression, re.IGNORECASE):
+            return "implicit"
+        return "function"
+
+    def _plot_spec_text(self, spec: dict[str, Any], *keys: str) -> str:
+        for key in keys:
+            value = spec.get(key)
+            if value is None:
+                continue
+            if isinstance(value, (list, tuple)):
+                return ", ".join(str(item).strip() for item in value if str(item).strip())
+            text = str(value).strip()
+            if text:
+                return text
+        return ""
+
+    def _plot_spec_expressions(self, spec: dict[str, Any]) -> str:
+        expressions = spec.get("expressions")
+        if isinstance(expressions, (list, tuple)):
+            return ", ".join(str(item).strip() for item in expressions if str(item).strip())
+        if expressions is not None:
+            return str(expressions).strip()
+        return self._plot_spec_text(spec, "expression", "equation", "expr", "formula")
+
+    def _strip_equation_lhs(self, expression: str, *, allowed_lhs: tuple[str, ...]) -> str:
+        text = (expression or "").strip()
+        if "=" not in text:
+            return text
+        lhs, rhs = text.split("=", 1)
+        lhs = lhs.strip().replace(" ", "").lower()
+        normalized_allowed = {item.replace(" ", "").lower() for item in allowed_lhs}
+        if lhs in normalized_allowed:
+            return rhs.strip()
+        return text
 
     def _extract_payload(self, message: str, commands: tuple[str, ...]) -> str:
         raw = (message or "").strip()

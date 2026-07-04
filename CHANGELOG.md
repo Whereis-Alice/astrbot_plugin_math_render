@@ -4,6 +4,8 @@
 
 ### Added
 
+- 新增解题图卡内嵌绘图链路：`render_math_solution_card` 支持 `plot_spec_json`、`plot_caption`、`plot_position`，`/mathsolveimg` 也会在题目需要函数图像或曲线时尝试生成 `plot_spec` 并把绘图融合进同一张解题卡；绘图失败会写入异常日志并继续输出解题卡。
+
 - 集成函数绘图能力，新增本地 Matplotlib 绘图服务，支持一元函数、多函数对比、隐式方程、极坐标、二维参数曲线、三维曲面、三维参数曲线和二维向量场。
 - 新增手动命令：`/plot`、`/plot3d`、`/polar`、`/parametric`、`/vector2d`、`/parametric3d`、`/plotstatus`。
 - 新增 LLM 绘图工具：`plot_function`、`plot_multiple`、`plot_implicit`、`plot_polar`、`plot_parametric`、`plot_3d_function`、`plot_3d_parametric`、`plot_vector_field_2d`。

@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.4.3] - 2026-07-05
+
+### Fixed
+
+- 修复部分 aiocqhttp/OneBot 环境下 base64 图片组件不落地发送的问题：插件发送渲染结果时默认改回 AstrBot 本地文件图片组件（`file_image` / `Image.fromFileSystem` 同一路径），保留发送前压缩检查；如确需 base64，可将 `send_image_transport` 配置为 `base64`。
+
 ## [v0.4.2] - 2026-07-05
 
 ### Fixed

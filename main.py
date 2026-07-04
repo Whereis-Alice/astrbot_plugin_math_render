@@ -1102,15 +1102,21 @@ class MathRenderPlugin(Star):
         if prepared_path is None:
             return event.plain_result("图片已经生成，但发送前找不到图片文件；请查看 AstrBot 日志。")
 
-        data = prepared_path.read_bytes()
-        encoded = base64.b64encode(data).decode("ascii")
-        self._debug(
-            "image send payload prepared path=%s bytes=%s base64_chars=%s",
-            prepared_path,
-            len(data),
-            len(encoded),
-        )
-        return event.make_result().base64_image(encoded)
+        transport = self._text("send_image_transport", "file").lower()
+        if transport == "base64":
+            data = prepared_path.read_bytes()
+            encoded = base64.b64encode(data).decode("ascii")
+            self._debug(
+                "image send payload prepared transport=base64 path=%s bytes=%s base64_chars=%s",
+                prepared_path,
+                len(data),
+                len(encoded),
+            )
+            return event.make_result().base64_image(encoded)
+
+        size = prepared_path.stat().st_size
+        self._debug("image send payload prepared transport=file path=%s bytes=%s", prepared_path, size)
+        return event.make_result().file_image(str(prepared_path))
 
     def _prepare_image_for_send(self, image_path: Path) -> Path | None:
         if not image_path.exists():

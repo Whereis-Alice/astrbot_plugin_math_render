@@ -491,10 +491,11 @@ LLM 主动调用时推荐使用 `plot_spec_json`：
 
 ## 图片发送排障
 
-如果日志显示图卡已经渲染完成，但 QQ/OneBot 端没有看到图片，通常是生成图过大或平台端不接受本地图片路径。插件会在发送前自动检查并压缩图片，然后用 base64 图片组件发送；开启 `debug_logging_enabled` 后可以在日志里看到发送前的图片路径、字节数、分辨率和压缩结果。
+如果日志显示图卡已经渲染完成，但 QQ/OneBot 端没有看到图片，通常是平台适配器不接受当前图片组件类型，或生成图超过平台限制。插件会在发送前自动检查并压缩图片，并默认使用 AstrBot 本地文件图片组件发送；这和 `send_message_to_user` 里传 `path` 的图片发送方式一致。开启 `debug_logging_enabled` 后可以在日志里看到发送前的图片路径、字节数、分辨率、压缩结果和发送组件类型。
 
 相关配置：
 
+- `send_image_transport`：默认 `file`；如平台明确支持 base64 图片组件，可改为 `base64`
 - `send_image_max_bytes`
 - `send_image_max_side`
 - `send_image_jpeg_quality`

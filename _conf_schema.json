@@ -208,6 +208,13 @@
     "default": false,
     "hint": "开启后会把表达式转换、提示注入、渲染后端选择、几何出图等细节写入 AstrBot 日志。"
   },
+  "send_image_transport": {
+    "type": "string",
+    "description": "图片发送组件类型",
+    "default": "file",
+    "options": ["file", "base64"],
+    "hint": "file 使用 AstrBot 本地文件图片组件，和 send_message_to_user 的 path 图片发送方式一致；base64 使用 base64 图片组件，仅在你的平台适配器明确支持时使用。"
+  },
   "send_image_max_bytes": {
     "type": "int",
     "description": "发送前图片最大字节数",

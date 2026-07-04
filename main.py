@@ -28,44 +28,44 @@ FORMULA_COMMANDS = (
     "latex2img",
     "exprimg",
     "expr2img",
-    "????",
-    "latex??",
-    "?????",
-    "????",
+    "公式渲染",
+    "latex渲染",
+    "表达式渲染",
+    "公式转图",
 )
-SOLVE_COMMANDS = ("mathsolveimg", "????", "????", "????")
-CLEANUP_COMMANDS = ("mathimgcleanup", "????", "????")
-PLOT_COMMANDS = ("plot", "mathplot", "functionplot", "????", "??")
-PLOT3D_COMMANDS = ("plot3d", "surfaceplot", "????", "????")
-POLAR_COMMANDS = ("polar", "polarplot", "?????")
-PARAMETRIC_COMMANDS = ("parametric", "paramplot", "????")
-VECTOR_FIELD_COMMANDS = ("vector2d", "vectorfield", "???")
-PARAMETRIC3D_COMMANDS = ("parametric3d", "param3d", "??????")
+SOLVE_COMMANDS = ("mathsolveimg", "解答渲染", "数学出图", "题目出图")
+CLEANUP_COMMANDS = ("mathimgcleanup", "渲染清理", "公式清理")
+PLOT_COMMANDS = ("plot", "mathplot", "functionplot", "函数绘图", "绘图")
+PLOT3D_COMMANDS = ("plot3d", "surfaceplot", "三维绘图", "曲面绘图")
+POLAR_COMMANDS = ("polar", "polarplot", "极坐标绘图")
+PARAMETRIC_COMMANDS = ("parametric", "paramplot", "参数绘图")
+VECTOR_FIELD_COMMANDS = ("vector2d", "vectorfield", "向量场")
+PARAMETRIC3D_COMMANDS = ("parametric3d", "param3d", "三维参数曲线")
 
 MATH_SIGNAL_PATTERNS = (
     r"\\(?:frac|sqrt|sum|int|lim|begin|alpha|beta|gamma|theta|pi)\b",
     r"\$\$.*\$\$",
     r"\$[^$]+\$",
     r"[A-Za-z0-9\)\]]\s*=\s*[A-Za-z0-9\(\[]",
-    r"\d+\s*[\+\-\*/??]\s*\d+",
+    r"\d+\s*[\+\-\*/×÷]\s*\d+",
     r"[A-Za-z]\^[A-Za-z0-9]",
 )
 
 DEFAULT_MATH_KEYWORDS = (
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
+    "数学",
+    "公式",
+    "方程",
+    "函数",
+    "导数",
+    "积分",
+    "极限",
+    "矩阵",
+    "向量",
+    "概率",
+    "统计",
+    "证明",
+    "几何",
+    "代数",
     "solve",
     "equation",
     "derivative",
@@ -76,30 +76,30 @@ DEFAULT_MATH_KEYWORDS = (
 )
 
 IMAGE_MATH_INTENT_KEYWORDS = (
-    "??",
-    "???",
-    "???",
-    "??",
-    "??",
-    "?????",
-    "????",
-    "????",
-    "???",
-    "???",
-    "???",
-    "???",
-    "???",
-    "???",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "???",
-    "???",
+    "这题",
+    "这道题",
+    "这个题",
+    "题目",
+    "题干",
+    "截图里的题",
+    "图里的题",
+    "图中这题",
+    "帮我做",
+    "帮我解",
+    "帮我讲",
+    "怎么做",
+    "怎么解",
+    "如何解",
+    "求解",
+    "解答",
+    "讲解",
+    "思路",
+    "过程",
+    "答案",
+    "证明",
+    "求证",
+    "算一下",
+    "会做吗",
     "solve this",
     "how to solve",
     "show steps",
@@ -107,25 +107,25 @@ IMAGE_MATH_INTENT_KEYWORDS = (
 )
 
 DEFAULT_GEOMETRY_KEYWORDS = (
-    "??",
-    "????",
-    "????",
-    "???",
-    "???",
-    "?",
-    "??",
-    "?",
-    "??",
-    "?",
-    "??",
-    "??",
-    "??",
-    "??",
-    "??",
-    "????",
-    "??",
-    "??",
-    "???",
+    "几何",
+    "平面几何",
+    "解析几何",
+    "三角形",
+    "四边形",
+    "圆",
+    "半圆",
+    "弧",
+    "切线",
+    "弦",
+    "半径",
+    "直径",
+    "垂直",
+    "平行",
+    "中点",
+    "角平分线",
+    "相似",
+    "全等",
+    "坐标系",
     "geometry",
     "triangle",
     "circle",
@@ -161,62 +161,62 @@ Available plotting tools:
 
 Use formula or solution-card rendering for normal formula display or step-by-step answers. Use plotting tools when the user explicitly wants a graph, curve, surface, or vector field."""
 
-AUTO_RENDER_PROMPT = """???????????????
-1. `render_math_solution_card`?????????????????????????
-2. `render_latex_formula`???? LaTeX ???????????????????????????
+AUTO_RENDER_PROMPT = """你拥有两个可用的数学渲染工具：
+1. `render_math_solution_card`：把完整数学解答渲染成高质量图片并直接发送给用户。
+2. `render_latex_formula`：把单条 LaTeX 公式或普通数学表达式渲染成高质量图片并直接发送给用户。
 
-?????????????????????????????????????????????
-??????????
-- ???????????????????????????
-- ??????????????????????
+当用户的问题明显是数学题、推导题、公式题，或者答案里有较多公式时，你可以主动调用渲染工具。
+优先在这些场景使用：
+- 多步推导、证明、矩阵、向量、微积分、概率统计、方程求解
+- 用户明确想要更清晰、适合转发、适合截图的答案
 
-?????
-- ???????????`style_hint` ?? paper?notebook?blackboard?aurora?????????????
-- ??????????????????????????????????
-- ???????????????????????"""
+使用规则：
+- 可以自由选择图片风格，`style_hint` 可用 paper、notebook、blackboard、aurora，也可以结合语义自行挑选。
+- 如果已经发送了图片，后续文字尽量简短，不要再把整段答案完整重复一遍。
+- 如果用户明确要求只要纯文本，不要调用渲染工具。"""
 
-IMAGE_MATH_TOOL_AWARENESS_PROMPT = """??????????????
-??????????????????????????????????????????????????????
-- `render_math_solution_card`?????????????????????????
-- `render_latex_formula`??????????????????????????????
-???????????????????????????????"""
+IMAGE_MATH_TOOL_AWARENESS_PROMPT = """当前对话包含用户上传的图片。
+如果你识别到图片里是数学题、公式、手写推导、试卷、课本例题，或其他明显的数学内容，请记住你可以调用以下工具：
+- `render_math_solution_card`：把完整解答整理成高质量数学图卡并直接发送给用户。
+- `render_latex_formula`：把单个公式或普通数学表达式整理成清晰图片并直接发送给用户。
+如果图片内容不是数学相关，就忽略这条提醒，按正常识图对话处理。"""
 
-IMAGE_MATH_AUTO_RENDER_PROMPT = """???????????????????????????????
-????????
-- ??????????????????
-- ?????????????????????????????? `render_math_solution_card` ?????????
-- ???????????????????????? `render_latex_formula`?
-- ???????? Python ????????????????????????????????????????????????????????????
-- ????????????????????????????????????????"""
+IMAGE_MATH_AUTO_RENDER_PROMPT = """当前用户很可能上传了数学题图片或截图，并希望你直接讲解或解答。
+处理这类请求时：
+- 先理解图片中的题目内容，再组织答案。
+- 如果属于数学题讲解、步骤推导、证明、求解、公式整理，优先使用 `render_math_solution_card` 输出高质量解答图。
+- 如果只是单个公式或表达式需要更清晰展示，优先使用 `render_latex_formula`。
+- 不要因为可以使用 Python 或代码工具就默认走代码式回复；除非用户明确要求代码、纯计算验证，或渲染工具明显不适合，否则优先使用数学渲染工具交付结果。
+- 如确实需要借助其他工具辅助计算，也应尽量把最终结果整理为清晰的数学图卡发给用户。"""
 
-PRE_REPLY_SYSTEM_PROMPT = """?? AstrBot ????????????????????????????????????????????????
-???
-1. ?????????????????
-2. ???? Markdown????????
-3. ?????????????????????????????
-4. ???????????????????????????????"""
+PRE_REPLY_SYSTEM_PROMPT = """你是 AstrBot 的回复助手。请根据当前人设风格，用自然、简短、像正常聊天一样的一句话告诉用户：请求已经开始处理。
+要求：
+1. 只输出一句自然回复，不要解释流程。
+2. 不要使用 Markdown、列表、代码块。
+3. 不要提到“系统提示词”“工具调用”“插件配置”等内部术语。
+4. 语气贴近当前人设，但内容要明确表达“已经开始整理并准备发图”。"""
 
-DEFAULT_FREE_LAYOUT_MARKDOWN_PROMPT = """????????????????????????????????? / ???? / ?? / ????????????????
-- ? `layout_mode` ?? `free`
-- ??????? `markdown_content`
-- `markdown_content` ???? Markdown ???????????????????? `$...$` ? `$$...$$` ????
-- ???????????????????????????????
-- ???????????????????????????? `structured` ??"""
+DEFAULT_FREE_LAYOUT_MARKDOWN_PROMPT = """当你希望把整张图卡排得更自然、更像讲义或笔记，而不是固定分成“题目 / 关键公式 / 解答 / 最终答案”几个区块时，请这样做：
+- 把 `layout_mode` 设为 `free`
+- 把主要内容写入 `markdown_content`
+- `markdown_content` 允许使用 Markdown 标题、列表、强调、引用、表格，也允许混合 `$...$` 和 `$$...$$` 数学公式
+- 适合证明题、讲解题、长推导、图文混合说明、希望更自由排版的场景
+- 如果只是标准问答、短解题、结构清晰的题目，也可以继续使用 `structured` 布局"""
 
 
-GEOMETRY_TOOL_AWARENESS_PROMPT = """??????????????????????????????????????
-- `render_math_solution_card` ???????????? `geometry_scene_json`
-- `geometry_scene_json` ????? JSON ?????????????
-- ?????????????????????????
-- ???????????????????????????????????
-- ???????????????????????????????????"""
+GEOMETRY_TOOL_AWARENESS_PROMPT = """当题目涉及几何、解析几何、三角形、圆、角度关系、辅助线或图形证明时，请记住：
+- `render_math_solution_card` 除了普通数学解答，还支持 `geometry_scene_json`
+- `geometry_scene_json` 应该是一个 JSON 字符串，用来描述几何示意图
+- 你可以在同一张解答图里同时给出文字解答和几何关系图
+- 几何图的坐标可以是“示意图坐标”，重点是关系清晰，不要求严格按真实比例
+- 适合画：三角形、圆、半圆、辅助线、角标、点位关系图、简单坐标几何示意图"""
 
-IMAGE_GEOMETRY_AUTO_RENDER_PROMPT = """???????????????????????????????????????????????????????
-- ?????????????
-- ??????????????????? `render_math_solution_card`
-- ??????? `geometry_scene_json`??????????????????????????
-- ????????????????????????????
-- ??????????????????????????????????????????"""
+IMAGE_GEOMETRY_AUTO_RENDER_PROMPT = """如果用户上传的是几何题图片、手写辅助图、试卷里的几何证明题，或任何明显需要画图辅助理解的数学图片，请优先考虑：
+- 先理解图中题意，再组织解答
+- 若几何示意图能明显帮助用户理解，请调用 `render_math_solution_card`
+- 在该工具里补充 `geometry_scene_json`，把关键点、线段、圆、辅助线、角标和关系图一起画出来
+- 图形可以是清晰的示意图，不必追求严格比例，但关系必须正确
+- 除非用户明确只要纯文本，否则不要只是冷冰冰给代码或算式，尽量把最终结果整理成图卡交付"""
 
 
 GEOMETRY_SCHEMA_REMINDER_PROMPT = """When you provide `geometry_scene_json` or `geometry_scene`, return a plain JSON object using supported keys such as `points`, `segments`, `lines`, `rays`, `circles`, `polygons`, `angle_marks`, and `annotations`.
@@ -297,43 +297,43 @@ class MathRenderPlugin(Star):
 
     @filter.command(
         "lateximg",
-        alias=["latex2img", "exprimg", "expr2img", "????", "latex??", "?????", "????"],
+        alias=["latex2img", "exprimg", "expr2img", "公式渲染", "latex渲染", "表达式渲染", "公式转图"],
     )
     async def lateximg(self, event: AstrMessageEvent):
         formula = self._extract_payload(event.message_str, FORMULA_COMMANDS)
         if not formula:
             yield event.plain_result(
-                "??: /lateximg <LaTeX ??????????>\n"
-                "??1: /lateximg \\int_0^1 x^2\\,dx = \\frac{1}{3}\n"
-                "??2: /lateximg 1/2"
+                "用法: /lateximg <LaTeX 公式或普通数学表达式>\n"
+                "示例1: /lateximg \\int_0^1 x^2\\,dx = \\frac{1}{3}\n"
+                "示例2: /lateximg 1/2"
             )
             return
 
         try:
             await self._maybe_send_pre_reply(event, scene="formula", trigger="manual", original_text=formula)
             converted = await self._prepare_formula_for_render(event, formula)
-            note = f"? AstrBot Math Render ?? ? ????: {converted.method}"
+            note = f"由 AstrBot Math Render 生成 · 转换方式: {converted.method}"
             image_path = await self.renderer.render_formula_card(
                 formula=converted.latex,
-                title="??????",
+                title="数学公式渲染",
                 note=note,
                 style_hint=self._text("default_style", DEFAULT_STYLE),
                 accent_color=self._text("default_accent_color", ""),
             )
         except Exception as exc:
             logger.exception("lateximg render failed")
-            yield event.plain_result(f"??????: {exc}")
+            yield event.plain_result(f"公式渲染失败: {exc}")
             return
 
         yield event.image_result(str(image_path))
 
-    @filter.command("mathsolveimg", alias=["????", "????", "????"])
+    @filter.command("mathsolveimg", alias=["解答渲染", "数学出图", "题目出图"])
     async def mathsolveimg(self, event: AstrMessageEvent):
         question = self._extract_payload(event.message_str, SOLVE_COMMANDS)
         if not question:
             yield event.plain_result(
-                "??: /mathsolveimg <????>\n"
-                "??: /mathsolveimg ?????? x^2 - 5x + 6 = 0"
+                "用法: /mathsolveimg <数学问题>\n"
+                "示例: /mathsolveimg 求解二次方程 x^2 - 5x + 6 = 0"
             )
             return
 
@@ -343,7 +343,7 @@ class MathRenderPlugin(Star):
             image_path = await self.renderer.render_solution_card(content)
         except Exception as exc:
             logger.exception("mathsolveimg render failed")
-            yield event.plain_result(f"??????: {exc}")
+            yield event.plain_result(f"解答出图失败: {exc}")
             return
 
         yield event.image_result(str(image_path))
@@ -353,10 +353,10 @@ class MathRenderPlugin(Star):
         payload = self._extract_payload(event.message_str, PLOT_COMMANDS)
         if not payload:
             yield event.plain_result(
-                "??: /plot <???>\n"
-                "??: /plot sin(x)\n"
-                "??: /plot sin(x), cos(x)\n"
-                "??: /plot x^2 + y^2 = 1"
+                "用法: /plot <表达式>\n"
+                "示例: /plot sin(x)\n"
+                "示例: /plot sin(x), cos(x)\n"
+                "示例: /plot x^2 + y^2 = 1"
             )
             return
         try:
@@ -369,7 +369,7 @@ class MathRenderPlugin(Star):
                 result = self.plotter.plot_function(payload)
         except Exception as exc:
             logger.exception("plot command failed")
-            yield event.plain_result(f"????: {exc}")
+            yield event.plain_result(f"绘图失败: {exc}")
             return
         yield event.image_result(str(result.path))
 
@@ -377,13 +377,13 @@ class MathRenderPlugin(Star):
     async def plot3d(self, event: AstrMessageEvent):
         payload = self._extract_payload(event.message_str, PLOT3D_COMMANDS)
         if not payload:
-            yield event.plain_result("??: /plot3d <z=f(x,y)>???: /plot3d sin(sqrt(x^2+y^2))")
+            yield event.plain_result("用法: /plot3d <z=f(x,y)>，例如: /plot3d sin(sqrt(x^2+y^2))")
             return
         try:
             result = self.plotter.plot_surface(payload)
         except Exception as exc:
             logger.exception("plot3d command failed")
-            yield event.plain_result(f"??????: {exc}")
+            yield event.plain_result(f"三维绘图失败: {exc}")
             return
         yield event.image_result(str(result.path))
 
@@ -391,13 +391,13 @@ class MathRenderPlugin(Star):
     async def polar(self, event: AstrMessageEvent):
         payload = self._extract_payload(event.message_str, POLAR_COMMANDS)
         if not payload:
-            yield event.plain_result("??: /polar <r=f(theta)>???: /polar sin(3*theta)")
+            yield event.plain_result("用法: /polar <r=f(theta)>，例如: /polar sin(3*theta)")
             return
         try:
             result = self.plotter.plot_polar(payload)
         except Exception as exc:
             logger.exception("polar command failed")
-            yield event.plain_result(f"???????: {exc}")
+            yield event.plain_result(f"极坐标绘图失败: {exc}")
             return
         yield event.image_result(str(result.path))
 
@@ -406,13 +406,13 @@ class MathRenderPlugin(Star):
         payload = self._extract_payload(event.message_str, PARAMETRIC_COMMANDS)
         parts = self.plotter.split_expressions(payload)
         if len(parts) != 2:
-            yield event.plain_result("??: /parametric <x(t)>, <y(t)>???: /parametric cos(t), sin(t)")
+            yield event.plain_result("用法: /parametric <x(t)>, <y(t)>，例如: /parametric cos(t), sin(t)")
             return
         try:
             result = self.plotter.plot_parametric(parts[0], parts[1])
         except Exception as exc:
             logger.exception("parametric command failed")
-            yield event.plain_result(f"????????: {exc}")
+            yield event.plain_result(f"参数曲线绘图失败: {exc}")
             return
         yield event.image_result(str(result.path))
 
@@ -421,13 +421,13 @@ class MathRenderPlugin(Star):
         payload = self._extract_payload(event.message_str, VECTOR_FIELD_COMMANDS)
         parts = self.plotter.split_expressions(payload)
         if len(parts) != 2:
-            yield event.plain_result("??: /vector2d <Fx(x,y)>, <Fy(x,y)>???: /vector2d -y, x")
+            yield event.plain_result("用法: /vector2d <Fx(x,y)>, <Fy(x,y)>，例如: /vector2d -y, x")
             return
         try:
             result = self.plotter.plot_vector_field_2d(parts[0], parts[1])
         except Exception as exc:
             logger.exception("vector2d command failed")
-            yield event.plain_result(f"???????: {exc}")
+            yield event.plain_result(f"向量场绘图失败: {exc}")
             return
         yield event.image_result(str(result.path))
 
@@ -437,14 +437,14 @@ class MathRenderPlugin(Star):
         parts = self.plotter.split_expressions(payload)
         if len(parts) != 3:
             yield event.plain_result(
-                "??: /parametric3d <x(t)>, <y(t)>, <z(t)>???: /parametric3d cos(t), sin(t), t/5"
+                "用法: /parametric3d <x(t)>, <y(t)>, <z(t)>，例如: /parametric3d cos(t), sin(t), t/5"
             )
             return
         try:
             result = self.plotter.plot_parametric_3d(parts[0], parts[1], parts[2])
         except Exception as exc:
             logger.exception("parametric3d command failed")
-            yield event.plain_result(f"??????????: {exc}")
+            yield event.plain_result(f"三维参数曲线绘图失败: {exc}")
             return
         yield event.image_result(str(result.path))
 
@@ -452,11 +452,11 @@ class MathRenderPlugin(Star):
     async def plotstatus(self, event: AstrMessageEvent):
         yield event.plain_result(self.plotter.status_text())
 
-    @filter.command("mathimgcleanup", alias=["????", "????"])
+    @filter.command("mathimgcleanup", alias=["渲染清理", "公式清理"])
     async def mathimgcleanup(self, event: AstrMessageEvent):
         removed = await self.renderer.cleanup_temp_files(purge_all=True)
         self._debug("manual cleanup removed=%s", removed)
-        yield event.plain_result(f"??? {removed} ????????")
+        yield event.plain_result(f"已清理 {removed} 个渲染临时文件。")
 
     @filter.llm_tool(name="render_latex_formula")
     async def render_latex_formula_tool(
@@ -481,10 +481,10 @@ class MathRenderPlugin(Star):
         converted = await self._prepare_formula_for_render(event, latex)
         final_note = note.strip()
         if not final_note:
-            final_note = f"? AstrBot Math Render ?? ? ????: {converted.method}"
+            final_note = f"由 AstrBot Math Render 生成 · 转换方式: {converted.method}"
         image_path = await self.renderer.render_formula_card(
             formula=converted.latex,
-            title=title.strip() or "??????",
+            title=title.strip() or "数学公式渲染",
             note=final_note,
             style_hint=style_hint or self._text("default_style", DEFAULT_STYLE),
             accent_color=accent_color or self._text("default_accent_color", ""),
@@ -543,7 +543,7 @@ class MathRenderPlugin(Star):
         content = SolutionCardContent(
             question=question,
             answer=answer,
-            title=title.strip() or "????",
+            title=title.strip() or "数学解答",
             key_formula=key_formula,
             style_hint=style_hint or self._text("default_style", DEFAULT_STYLE),
             accent_color=accent_color or self._text("default_accent_color", ""),
@@ -850,7 +850,7 @@ class MathRenderPlugin(Star):
     async def _solve_question(self, event: AstrMessageEvent, question: str) -> SolutionCardContent:
         provider_id = await self._get_current_provider_id(event)
         if not provider_id:
-            raise RuntimeError("????????? Chat Provider?")
+            raise RuntimeError("当前会话没有可用的 Chat Provider。")
 
         self._debug("solving question with provider=%s", provider_id)
         response = await self.context.llm_generate(
@@ -879,7 +879,7 @@ class MathRenderPlugin(Star):
     ) -> LatexConversionResult:
         normalized = normalize_latex_output(raw_formula)
         if not normalized:
-            raise RuntimeError("???????")
+            raise RuntimeError("公式内容为空。")
         if is_likely_latex(normalized):
             self._debug("formula treated as latex directly")
             return LatexConversionResult(normalized, "already_latex")
@@ -908,7 +908,7 @@ class MathRenderPlugin(Star):
                 errors.append(f"local conversion failed: {exc}")
                 self._debug("latexify local failed: %s", exc)
                 if backend == "local":
-                    raise RuntimeError(f"?????? LaTeX ??: {exc}") from exc
+                    raise RuntimeError(f"本地表达式转 LaTeX 失败: {exc}") from exc
 
         llm_fallback_enabled = self._bool("allow_llm_latexify_fallback", True)
         if backend == "llm" or (backend == "auto" and llm_fallback_enabled):
@@ -920,10 +920,10 @@ class MathRenderPlugin(Star):
                 errors.append(f"llm conversion failed: {exc}")
                 self._debug("latexify llm failed: %s", exc)
                 if backend == "llm":
-                    raise RuntimeError(f"LLM ???? LaTeX ??: {exc}") from exc
+                    raise RuntimeError(f"LLM 表达式转 LaTeX 失败: {exc}") from exc
 
-        joined = "?".join(errors) if errors else "????????? LaTeX ??"
-        raise RuntimeError(f"???? LaTeX ???{joined}")
+        joined = "；".join(errors) if errors else "没有可用的表达式转 LaTeX 后端"
+        raise RuntimeError(f"表达式转 LaTeX 失败：{joined}")
 
     async def _llm_convert_expression_to_latex(
         self,
@@ -932,7 +932,7 @@ class MathRenderPlugin(Star):
     ) -> LatexConversionResult:
         provider_id = await self._get_current_provider_id(event)
         if not provider_id:
-            raise RuntimeError("????????? Chat Provider?")
+            raise RuntimeError("当前会话没有可用的 Chat Provider。")
 
         response = await self.context.llm_generate(
             chat_provider_id=provider_id,
@@ -941,7 +941,7 @@ class MathRenderPlugin(Star):
         )
         latex = normalize_latex_output(response.completion_text or "")
         if not latex:
-            raise RuntimeError("LLM ??????? LaTeX ???")
+            raise RuntimeError("LLM 没有返回可用的 LaTeX 结果。")
         return LatexConversionResult(latex=latex, method="llm")
 
     async def _maybe_send_pre_reply(
@@ -984,18 +984,18 @@ class MathRenderPlugin(Star):
     ) -> str:
         provider_id = await self._get_current_provider_id(event)
         if not provider_id:
-            raise RuntimeError("????????? Chat Provider?")
+            raise RuntimeError("当前会话没有可用的 Chat Provider。")
 
         persona_prompt = await self._resolve_persona_prompt(event)
         system_prompt = self._text("pre_reply_system_prompt", PRE_REPLY_SYSTEM_PROMPT)
         if persona_prompt:
             system_prompt = f"{persona_prompt}\n\n{system_prompt}"
 
-        scene_name = "????" if scene == "formula" else "????"
+        scene_name = "公式渲染" if scene == "formula" else "解答出图"
         prompt = self._apply_prompt_template(
             self._text(
                 "pre_reply_user_prompt",
-                "???{{scene_name}}\n???????{{original_text}}\n?????????????????????????????????",
+                "场景：{{scene_name}}\n用户原始内容：{{original_text}}\n请按当前人设风格，回复一句自然的话，表示你已经开始处理并稍后发图。",
             ),
             scene_name=scene_name,
             original_text=(original_text or "").strip(),
@@ -1007,7 +1007,7 @@ class MathRenderPlugin(Star):
         )
         text = (response.completion_text or "").strip()
         if not text:
-            raise RuntimeError("LLM ??????")
+            raise RuntimeError("LLM 预回复为空。")
         return text
 
     async def _resolve_persona_prompt(self, event: AstrMessageEvent) -> str:
@@ -1055,8 +1055,8 @@ class MathRenderPlugin(Star):
 
     def _fallback_pre_reply(self, scene: str) -> str:
         if scene == "formula":
-            return self._text("pre_reply_fallback_text_formula", "?????????????????????")
-        return self._text("pre_reply_fallback_text_solution", "??????????????????")
+            return self._text("pre_reply_fallback_text_formula", "我来把这个公式整理成清晰的图片，稍等一下。")
+        return self._text("pre_reply_fallback_text_solution", "我先整理思路并生成解答图，马上发你。")
 
     def _clean_pre_reply(self, text: str, fallback: str) -> str:
         cleaned = re.sub(r"\s+", " ", (text or "").strip())
@@ -1100,8 +1100,8 @@ class MathRenderPlugin(Star):
         return any(
             re.search(pattern, candidate, re.IGNORECASE)
             for pattern in (
-                r"[????]",
-                r"(?|??|?|??|?|??|??|???|???|??|??|??|????)",
+                r"[△∠⊥∥]",
+                r"(圆|半圆|弧|切线|弦|半径|直径|三角形|四边形|平行|垂直|中点|角平分线)",
                 r"(triangle|circle|angle|perpendicular|parallel|geometry)",
             )
         )
@@ -1152,10 +1152,10 @@ class MathRenderPlugin(Star):
         return any(
             re.search(pattern, candidate, re.IGNORECASE)
             for pattern in (
-                r"(?|??|??).{0,4}?",
-                r"(??|??).{0,4}(?|?|?|?)",
-                r"(??|??).{0,4}(?|?|?|?|??)",
-                r"(??|??|??|??|??|??|??|??)",
+                r"(这|这个|这道).{0,4}题",
+                r"(怎么|如何).{0,4}(做|解|求|证)",
+                r"(帮我|麻烦).{0,4}(做|解|算|讲|分析)",
+                r"(求解|解答|讲解|思路|过程|答案|证明|求证)",
             )
         )
 

@@ -80,7 +80,7 @@ class MathPlotService:
         render_key = self._cache_key("plot_function", expression, x_range, title, xlabel, ylabel)
         target_path = self.temp_dir / f"plot_function_{render_key}.png"
         if self._cached(target_path):
-            return PlotResult(target_path, f"????? y = {latex(expr)}?x ?? [{x_min}, {x_max}]?")
+            return PlotResult(target_path, f"已绘制函数 y = {latex(expr)}，x 范围 [{x_min}, {x_max}]。")
 
         fig, ax = self._make_2d_figure()
         ax.plot(
@@ -94,7 +94,7 @@ class MathPlotService:
         ax.legend(fontsize=10)
         ax.set_title(title or f"$y = {latex(expr)}$", fontsize=14)
         self._save_and_close(fig, target_path)
-        return PlotResult(target_path, f"????? y = {latex(expr)}?x ?? [{x_min}, {x_max}]?")
+        return PlotResult(target_path, f"已绘制函数 y = {latex(expr)}，x 范围 [{x_min}, {x_max}]。")
 
     def plot_multiple(
         self,
@@ -119,7 +119,7 @@ class MathPlotService:
         render_key = self._cache_key("plot_multiple", expressions, x_range, title, xlabel, ylabel)
         target_path = self.temp_dir / f"plot_multiple_{render_key}.png"
         if self._cached(target_path):
-            return PlotResult(target_path, f"??? {len(parsed)} ??????x ?? [{x_min}, {x_max}]?")
+            return PlotResult(target_path, f"已绘制 {len(parsed)} 条函数曲线，x 范围 [{x_min}, {x_max}]。")
 
         fig, ax = self._make_2d_figure()
         colors = self._plot_colors()
@@ -145,7 +145,7 @@ class MathPlotService:
         ax.legend(fontsize=10)
         ax.set_title(title or "Function comparison", fontsize=14)
         self._save_and_close(fig, target_path)
-        return PlotResult(target_path, f"??? {plotted} ??????x ?? [{x_min}, {x_max}]?")
+        return PlotResult(target_path, f"已绘制 {plotted} 条函数曲线，x 范围 [{x_min}, {x_max}]。")
 
     def plot_implicit(
         self,
@@ -172,7 +172,7 @@ class MathPlotService:
         render_key = self._cache_key("plot_implicit", equation, x_range, y_range, title, xlabel, ylabel)
         target_path = self.temp_dir / f"plot_implicit_{render_key}.png"
         if self._cached(target_path):
-            return PlotResult(target_path, f"??????? {latex(expr)} = 0?")
+            return PlotResult(target_path, f"已绘制隐式方程 {latex(expr)} = 0。")
 
         fig, ax = self._make_2d_figure()
         ax.contour(
@@ -188,7 +188,7 @@ class MathPlotService:
         self._style_2d_axes(ax, xlabel or "x", ylabel or "y")
         ax.set_title(title or f"${latex(expr)} = 0$", fontsize=14)
         self._save_and_close(fig, target_path)
-        return PlotResult(target_path, f"??????? {latex(expr)} = 0?")
+        return PlotResult(target_path, f"已绘制隐式方程 {latex(expr)} = 0。")
 
     def plot_polar(
         self,
@@ -211,7 +211,7 @@ class MathPlotService:
         render_key = self._cache_key("plot_polar", expression, theta_range, title)
         target_path = self.temp_dir / f"plot_polar_{render_key}.png"
         if self._cached(target_path):
-            return PlotResult(target_path, f"???????? r = {latex(expr)}?")
+            return PlotResult(target_path, f"已绘制极坐标曲线 r = {latex(expr)}。")
 
         fig = plt.figure(
             figsize=(self._float("plot_polar_figure_size_in", 8.0), self._float("plot_polar_figure_size_in", 8.0)),
@@ -230,7 +230,7 @@ class MathPlotService:
         ax.legend(fontsize=10, loc="upper right")
         ax.set_title(title or f"$r = {latex(expr)}$", fontsize=14, pad=14)
         self._save_and_close(fig, target_path, tight=False)
-        return PlotResult(target_path, f"???????? r = {latex(expr)}?")
+        return PlotResult(target_path, f"已绘制极坐标曲线 r = {latex(expr)}。")
 
     def plot_parametric(
         self,
@@ -256,7 +256,7 @@ class MathPlotService:
         render_key = self._cache_key("plot_parametric", x_expression, y_expression, t_range, title, xlabel, ylabel)
         target_path = self.temp_dir / f"plot_parametric_{render_key}.png"
         if self._cached(target_path):
-            return PlotResult(target_path, "??????????")
+            return PlotResult(target_path, "已绘制二维参数曲线。")
 
         fig, ax = self._make_2d_figure()
         ax.plot(
@@ -271,7 +271,7 @@ class MathPlotService:
         ax.set_title(title or f"$(x,y)=({latex(expr_x)}, {latex(expr_y)})$", fontsize=14)
         ax.set_aspect("equal", adjustable="datalim")
         self._save_and_close(fig, target_path)
-        return PlotResult(target_path, "??????????")
+        return PlotResult(target_path, "已绘制二维参数曲线。")
 
     def plot_surface(
         self,
@@ -300,7 +300,7 @@ class MathPlotService:
         render_key = self._cache_key("plot_surface", expression, x_range, y_range, title, xlabel, ylabel, zlabel)
         target_path = self.temp_dir / f"plot_surface_{render_key}.png"
         if self._cached(target_path):
-            return PlotResult(target_path, f"??????? z = {latex(expr)}?")
+            return PlotResult(target_path, f"已绘制三维曲面 z = {latex(expr)}。")
 
         fig = plt.figure(figsize=(11, 8), dpi=self._int("plot_dpi", 140), facecolor="white", constrained_layout=True)
         ax = fig.add_subplot(111, projection="3d")
@@ -321,7 +321,7 @@ class MathPlotService:
         ax.set_title(title or f"$z = {latex(expr)}$", fontsize=14)
         ax.view_init(elev=self._float("plot_3d_elev", 25), azim=self._float("plot_3d_azim", -60))
         self._save_and_close(fig, target_path)
-        return PlotResult(target_path, f"??????? z = {latex(expr)}?")
+        return PlotResult(target_path, f"已绘制三维曲面 z = {latex(expr)}。")
 
     def plot_parametric_3d(
         self,
@@ -362,7 +362,7 @@ class MathPlotService:
         )
         target_path = self.temp_dir / f"plot_parametric_3d_{render_key}.png"
         if self._cached(target_path):
-            return PlotResult(target_path, "??????????")
+            return PlotResult(target_path, "已绘制三维参数曲线。")
 
         fig = plt.figure(figsize=(11, 8), dpi=self._int("plot_dpi", 140), facecolor="white", constrained_layout=True)
         ax = fig.add_subplot(111, projection="3d")
@@ -374,7 +374,7 @@ class MathPlotService:
         )
         ax.view_init(elev=self._float("plot_3d_elev", 25), azim=self._float("plot_3d_azim", -60))
         self._save_and_close(fig, target_path)
-        return PlotResult(target_path, "??????????")
+        return PlotResult(target_path, "已绘制三维参数曲线。")
 
     def plot_vector_field_2d(
         self,
@@ -413,7 +413,7 @@ class MathPlotService:
         render_key = self._cache_key("plot_vector_field", x_expression, y_expression, x_range, y_range, title)
         target_path = self.temp_dir / f"plot_vector_field_{render_key}.png"
         if self._cached(target_path):
-            return PlotResult(target_path, "?????????")
+            return PlotResult(target_path, "已绘制二维向量场。")
 
         fig, ax = self._make_2d_figure()
         quiver = ax.quiver(
@@ -432,13 +432,13 @@ class MathPlotService:
         self._style_2d_axes(ax, xlabel or "x", ylabel or "y")
         ax.set_title(title or f"$F=({latex(expr_x)}, {latex(expr_y)})$", fontsize=14)
         self._save_and_close(fig, target_path)
-        return PlotResult(target_path, "?????????")
+        return PlotResult(target_path, "已绘制二维向量场。")
 
     def split_expressions(self, text: str) -> list[str]:
         items: list[str] = []
         current: list[str] = []
         depth = 0
-        for char in (text or "").replace("?", ","):
+        for char in (text or "").replace("，", ","):
             if char in "([{":
                 depth += 1
             elif char in ")]}" and depth > 0:
@@ -481,9 +481,9 @@ class MathPlotService:
 
     def _preprocess_expr(self, expression: str) -> str:
         text = (expression or "").strip()
-        text = text.replace("?", ",").replace("?", "pi").replace("?", "pi")
-        text = text.replace("?", "theta").replace("?", "theta")
-        text = text.replace("?", "phi").replace("?", "phi").replace("?", "phi")
+        text = text.replace("，", ",").replace("π", "pi").replace("Π", "pi")
+        text = text.replace("θ", "theta").replace("Θ", "theta")
+        text = text.replace("φ", "phi").replace("Φ", "phi").replace("ϕ", "phi")
         text = text.replace("^", "**")
         text = re.sub(r"\bmax\s*\(", "Max(", text)
         text = re.sub(r"\bmin\s*\(", "Min(", text)

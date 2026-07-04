@@ -19,6 +19,7 @@ from .conversion import (
     normalize_latex_output,
 )
 from .rendering import DEFAULT_STYLE, MathRenderService, PLUGIN_NAME, SolutionCardContent
+from .plotting import MathPlotService
 from .solving import SOLVER_SYSTEM_PROMPT, build_solver_prompt, parse_solver_response
 
 
@@ -27,38 +28,44 @@ FORMULA_COMMANDS = (
     "latex2img",
     "exprimg",
     "expr2img",
-    "公式渲染",
-    "latex渲染",
-    "表达式渲染",
-    "公式转图",
+    "????",
+    "latex??",
+    "?????",
+    "????",
 )
-SOLVE_COMMANDS = ("mathsolveimg", "解答渲染", "数学出图", "题目出图")
-CLEANUP_COMMANDS = ("mathimgcleanup", "渲染清理", "公式清理")
+SOLVE_COMMANDS = ("mathsolveimg", "????", "????", "????")
+CLEANUP_COMMANDS = ("mathimgcleanup", "????", "????")
+PLOT_COMMANDS = ("plot", "mathplot", "functionplot", "????", "??")
+PLOT3D_COMMANDS = ("plot3d", "surfaceplot", "????", "????")
+POLAR_COMMANDS = ("polar", "polarplot", "?????")
+PARAMETRIC_COMMANDS = ("parametric", "paramplot", "????")
+VECTOR_FIELD_COMMANDS = ("vector2d", "vectorfield", "???")
+PARAMETRIC3D_COMMANDS = ("parametric3d", "param3d", "??????")
 
 MATH_SIGNAL_PATTERNS = (
     r"\\(?:frac|sqrt|sum|int|lim|begin|alpha|beta|gamma|theta|pi)\b",
     r"\$\$.*\$\$",
     r"\$[^$]+\$",
     r"[A-Za-z0-9\)\]]\s*=\s*[A-Za-z0-9\(\[]",
-    r"\d+\s*[\+\-\*/×÷]\s*\d+",
+    r"\d+\s*[\+\-\*/??]\s*\d+",
     r"[A-Za-z]\^[A-Za-z0-9]",
 )
 
 DEFAULT_MATH_KEYWORDS = (
-    "数学",
-    "公式",
-    "方程",
-    "函数",
-    "导数",
-    "积分",
-    "极限",
-    "矩阵",
-    "向量",
-    "概率",
-    "统计",
-    "证明",
-    "几何",
-    "代数",
+    "??",
+    "??",
+    "??",
+    "??",
+    "??",
+    "??",
+    "??",
+    "??",
+    "??",
+    "??",
+    "??",
+    "??",
+    "??",
+    "??",
     "solve",
     "equation",
     "derivative",
@@ -69,30 +76,30 @@ DEFAULT_MATH_KEYWORDS = (
 )
 
 IMAGE_MATH_INTENT_KEYWORDS = (
-    "这题",
-    "这道题",
-    "这个题",
-    "题目",
-    "题干",
-    "截图里的题",
-    "图里的题",
-    "图中这题",
-    "帮我做",
-    "帮我解",
-    "帮我讲",
-    "怎么做",
-    "怎么解",
-    "如何解",
-    "求解",
-    "解答",
-    "讲解",
-    "思路",
-    "过程",
-    "答案",
-    "证明",
-    "求证",
-    "算一下",
-    "会做吗",
+    "??",
+    "???",
+    "???",
+    "??",
+    "??",
+    "?????",
+    "????",
+    "????",
+    "???",
+    "???",
+    "???",
+    "???",
+    "???",
+    "???",
+    "??",
+    "??",
+    "??",
+    "??",
+    "??",
+    "??",
+    "??",
+    "??",
+    "???",
+    "???",
     "solve this",
     "how to solve",
     "show steps",
@@ -100,25 +107,25 @@ IMAGE_MATH_INTENT_KEYWORDS = (
 )
 
 DEFAULT_GEOMETRY_KEYWORDS = (
-    "几何",
-    "平面几何",
-    "解析几何",
-    "三角形",
-    "四边形",
-    "圆",
-    "半圆",
-    "弧",
-    "切线",
-    "弦",
-    "半径",
-    "直径",
-    "垂直",
-    "平行",
-    "中点",
-    "角平分线",
-    "相似",
-    "全等",
-    "坐标系",
+    "??",
+    "????",
+    "????",
+    "???",
+    "???",
+    "?",
+    "??",
+    "?",
+    "??",
+    "?",
+    "??",
+    "??",
+    "??",
+    "??",
+    "??",
+    "????",
+    "??",
+    "??",
+    "???",
     "geometry",
     "triangle",
     "circle",
@@ -128,62 +135,88 @@ DEFAULT_GEOMETRY_KEYWORDS = (
     "parallel",
 )
 
-AUTO_RENDER_PROMPT = """你拥有两个可用的数学渲染工具：
-1. `render_math_solution_card`：把完整数学解答渲染成高质量图片并直接发送给用户。
-2. `render_latex_formula`：把单条 LaTeX 公式或普通数学表达式渲染成高质量图片并直接发送给用户。
+DEFAULT_PLOT_KEYWORDS = (
+    "plot",
+    "graph",
+    "curve",
+    "surface",
+    "polar",
+    "parametric",
+    "vector field",
+    "function graph",
+    "function plot",
+)
 
-当用户的问题明显是数学题、推导题、公式题，或者答案里有较多公式时，你可以主动调用渲染工具。
-优先在这些场景使用：
-- 多步推导、证明、矩阵、向量、微积分、概率统计、方程求解
-- 用户明确想要更清晰、适合转发、适合截图的答案
+PLOT_TOOL_AWARENESS_PROMPT = """When the user asks to draw or compare math functions, curves, implicit equations, polar curves, parametric curves, 3D surfaces, or 2D vector fields, you can call the plotting tools from this plugin.
 
-使用规则：
-- 可以自由选择图片风格，`style_hint` 可用 paper、notebook、blackboard、aurora，也可以结合语义自行挑选。
-- 如果已经发送了图片，后续文字尽量简短，不要再把整段答案完整重复一遍。
-- 如果用户明确要求只要纯文本，不要调用渲染工具。"""
+Available plotting tools:
+- `plot_function`: draw one-variable functions y=f(x).
+- `plot_multiple`: compare multiple one-variable functions in one coordinate system.
+- `plot_implicit`: draw implicit equations F(x,y)=0.
+- `plot_polar`: draw polar curves r=f(theta).
+- `plot_parametric`: draw 2D parametric curves x=f(t), y=g(t).
+- `plot_3d_function`: draw 3D surfaces z=f(x,y).
+- `plot_3d_parametric`: draw 3D parametric curves x=f(t), y=g(t), z=h(t).
+- `plot_vector_field_2d`: draw 2D vector fields F=(Fx(x,y), Fy(x,y)).
 
-IMAGE_MATH_TOOL_AWARENESS_PROMPT = """当前对话包含用户上传的图片。
-如果你识别到图片里是数学题、公式、手写推导、试卷、课本例题，或其他明显的数学内容，请记住你可以调用以下工具：
-- `render_math_solution_card`：把完整解答整理成高质量数学图卡并直接发送给用户。
-- `render_latex_formula`：把单个公式或普通数学表达式整理成清晰图片并直接发送给用户。
-如果图片内容不是数学相关，就忽略这条提醒，按正常识图对话处理。"""
+Use formula or solution-card rendering for normal formula display or step-by-step answers. Use plotting tools when the user explicitly wants a graph, curve, surface, or vector field."""
 
-IMAGE_MATH_AUTO_RENDER_PROMPT = """当前用户很可能上传了数学题图片或截图，并希望你直接讲解或解答。
-处理这类请求时：
-- 先理解图片中的题目内容，再组织答案。
-- 如果属于数学题讲解、步骤推导、证明、求解、公式整理，优先使用 `render_math_solution_card` 输出高质量解答图。
-- 如果只是单个公式或表达式需要更清晰展示，优先使用 `render_latex_formula`。
-- 不要因为可以使用 Python 或代码工具就默认走代码式回复；除非用户明确要求代码、纯计算验证，或渲染工具明显不适合，否则优先使用数学渲染工具交付结果。
-- 如确实需要借助其他工具辅助计算，也应尽量把最终结果整理为清晰的数学图卡发给用户。"""
+AUTO_RENDER_PROMPT = """???????????????
+1. `render_math_solution_card`?????????????????????????
+2. `render_latex_formula`???? LaTeX ???????????????????????????
 
-PRE_REPLY_SYSTEM_PROMPT = """你是 AstrBot 的回复助手。请根据当前人设风格，用自然、简短、像正常聊天一样的一句话告诉用户：请求已经开始处理。
-要求：
-1. 只输出一句自然回复，不要解释流程。
-2. 不要使用 Markdown、列表、代码块。
-3. 不要提到“系统提示词”“工具调用”“插件配置”等内部术语。
-4. 语气贴近当前人设，但内容要明确表达“已经开始整理并准备发图”。"""
+?????????????????????????????????????????????
+??????????
+- ???????????????????????????
+- ??????????????????????
 
-DEFAULT_FREE_LAYOUT_MARKDOWN_PROMPT = """当你希望把整张图卡排得更自然、更像讲义或笔记，而不是固定分成“题目 / 关键公式 / 解答 / 最终答案”几个区块时，请这样做：
-- 把 `layout_mode` 设为 `free`
-- 把主要内容写入 `markdown_content`
-- `markdown_content` 允许使用 Markdown 标题、列表、强调、引用、表格，也允许混合 `$...$` 和 `$$...$$` 数学公式
-- 适合证明题、讲解题、长推导、图文混合说明、希望更自由排版的场景
-- 如果只是标准问答、短解题、结构清晰的题目，也可以继续使用 `structured` 布局"""
+?????
+- ???????????`style_hint` ?? paper?notebook?blackboard?aurora?????????????
+- ??????????????????????????????????
+- ???????????????????????"""
+
+IMAGE_MATH_TOOL_AWARENESS_PROMPT = """??????????????
+??????????????????????????????????????????????????????
+- `render_math_solution_card`?????????????????????????
+- `render_latex_formula`??????????????????????????????
+???????????????????????????????"""
+
+IMAGE_MATH_AUTO_RENDER_PROMPT = """???????????????????????????????
+????????
+- ??????????????????
+- ?????????????????????????????? `render_math_solution_card` ?????????
+- ???????????????????????? `render_latex_formula`?
+- ???????? Python ????????????????????????????????????????????????????????????
+- ????????????????????????????????????????"""
+
+PRE_REPLY_SYSTEM_PROMPT = """?? AstrBot ????????????????????????????????????????????????
+???
+1. ?????????????????
+2. ???? Markdown????????
+3. ?????????????????????????????
+4. ???????????????????????????????"""
+
+DEFAULT_FREE_LAYOUT_MARKDOWN_PROMPT = """????????????????????????????????? / ???? / ?? / ????????????????
+- ? `layout_mode` ?? `free`
+- ??????? `markdown_content`
+- `markdown_content` ???? Markdown ???????????????????? `$...$` ? `$$...$$` ????
+- ???????????????????????????????
+- ???????????????????????????? `structured` ??"""
 
 
-GEOMETRY_TOOL_AWARENESS_PROMPT = """当题目涉及几何、解析几何、三角形、圆、角度关系、辅助线或图形证明时，请记住：
-- `render_math_solution_card` 除了普通数学解答，还支持 `geometry_scene_json`
-- `geometry_scene_json` 应该是一个 JSON 字符串，用来描述几何示意图
-- 你可以在同一张解答图里同时给出文字解答和几何关系图
-- 几何图的坐标可以是“示意图坐标”，重点是关系清晰，不要求严格按真实比例
-- 适合画：三角形、圆、半圆、辅助线、角标、点位关系图、简单坐标几何示意图"""
+GEOMETRY_TOOL_AWARENESS_PROMPT = """??????????????????????????????????????
+- `render_math_solution_card` ???????????? `geometry_scene_json`
+- `geometry_scene_json` ????? JSON ?????????????
+- ?????????????????????????
+- ???????????????????????????????????
+- ???????????????????????????????????"""
 
-IMAGE_GEOMETRY_AUTO_RENDER_PROMPT = """如果用户上传的是几何题图片、手写辅助图、试卷里的几何证明题，或任何明显需要画图辅助理解的数学图片，请优先考虑：
-- 先理解图中题意，再组织解答
-- 若几何示意图能明显帮助用户理解，请调用 `render_math_solution_card`
-- 在该工具里补充 `geometry_scene_json`，把关键点、线段、圆、辅助线、角标和关系图一起画出来
-- 图形可以是清晰的示意图，不必追求严格比例，但关系必须正确
-- 除非用户明确只要纯文本，否则不要只是冷冰冰给代码或算式，尽量把最终结果整理成图卡交付"""
+IMAGE_GEOMETRY_AUTO_RENDER_PROMPT = """???????????????????????????????????????????????????????
+- ?????????????
+- ??????????????????? `render_math_solution_card`
+- ??????? `geometry_scene_json`??????????????????????????
+- ????????????????????????????
+- ??????????????????????????????????????????"""
 
 
 GEOMETRY_SCHEMA_REMINDER_PROMPT = """When you provide `geometry_scene_json` or `geometry_scene`, return a plain JSON object using supported keys such as `points`, `segments`, `lines`, `rays`, `circles`, `polygons`, `angle_marks`, and `annotations`.
@@ -199,6 +232,7 @@ class MathRenderPlugin(Star):
         super().__init__(context)
         self.config = config or AstrBotConfig()
         self.renderer = MathRenderService(self, self.config, plugin_name=PLUGIN_NAME)
+        self.plotter = MathPlotService(self.config, self.renderer.temp_dir, debug=self._debug)
 
     async def initialize(self) -> None:
         await self.renderer.prepare()
@@ -216,16 +250,26 @@ class MathRenderPlugin(Star):
         has_image = self._request_has_image(event, req)
         image_tool_prompt_enabled = self._bool("image_math_tool_prompt_enabled", True)
         geometry_tool_prompt_enabled = self._bool("geometry_tool_prompt_enabled", True)
+        plot_tool_prompt_enabled = self._bool("plot_tool_prompt_enabled", True)
         is_math_text = self._looks_like_math(prompt_text)
         is_geometry_text = self._looks_like_geometry(prompt_text)
+        is_plot_text = self._looks_like_plot(prompt_text)
         is_image_math_request = has_image and self._looks_like_math_image_request(prompt_text)
-        if not is_math_text and not is_geometry_text and not is_image_math_request and not (has_image and image_tool_prompt_enabled):
+        if (
+            not is_math_text
+            and not is_geometry_text
+            and not is_plot_text
+            and not is_image_math_request
+            and not (has_image and image_tool_prompt_enabled)
+        ):
             return
 
         existing = req.system_prompt.strip()
         prompt_parts = [existing]
         if is_math_text or is_image_math_request:
             prompt_parts.append(AUTO_RENDER_PROMPT)
+        if plot_tool_prompt_enabled and is_plot_text:
+            prompt_parts.append(self._text("plot_tool_awareness_prompt", PLOT_TOOL_AWARENESS_PROMPT))
         if has_image and image_tool_prompt_enabled:
             prompt_parts.append(self._text("image_math_tool_awareness_prompt", IMAGE_MATH_TOOL_AWARENESS_PROMPT))
         if is_image_math_request:
@@ -239,55 +283,57 @@ class MathRenderPlugin(Star):
             prompt_parts.append(self._text("llm_render_layout_prompt", DEFAULT_FREE_LAYOUT_MARKDOWN_PROMPT))
         req.system_prompt = "\n\n".join(part for part in prompt_parts if part).strip()
         self._debug(
-            "auto render prompt injected has_image=%s image_tool_prompt_enabled=%s geometry_tool_prompt_enabled=%s is_math_text=%s is_geometry_text=%s is_image_math_request=%s message=%r",
+            "auto render prompt injected has_image=%s image_tool_prompt_enabled=%s geometry_tool_prompt_enabled=%s plot_tool_prompt_enabled=%s is_math_text=%s is_geometry_text=%s is_plot_text=%s is_image_math_request=%s message=%r",
             has_image,
             image_tool_prompt_enabled,
             geometry_tool_prompt_enabled,
+            plot_tool_prompt_enabled,
             is_math_text,
             is_geometry_text,
+            is_plot_text,
             is_image_math_request,
             event.message_str,
         )
 
     @filter.command(
         "lateximg",
-        alias=["latex2img", "exprimg", "expr2img", "公式渲染", "latex渲染", "表达式渲染", "公式转图"],
+        alias=["latex2img", "exprimg", "expr2img", "????", "latex??", "?????", "????"],
     )
     async def lateximg(self, event: AstrMessageEvent):
         formula = self._extract_payload(event.message_str, FORMULA_COMMANDS)
         if not formula:
             yield event.plain_result(
-                "用法: /lateximg <LaTeX 公式或普通数学表达式>\n"
-                "示例1: /lateximg \\int_0^1 x^2\\,dx = \\frac{1}{3}\n"
-                "示例2: /lateximg 1/2"
+                "??: /lateximg <LaTeX ??????????>\n"
+                "??1: /lateximg \\int_0^1 x^2\\,dx = \\frac{1}{3}\n"
+                "??2: /lateximg 1/2"
             )
             return
 
         try:
             await self._maybe_send_pre_reply(event, scene="formula", trigger="manual", original_text=formula)
             converted = await self._prepare_formula_for_render(event, formula)
-            note = f"由 AstrBot Math Render 生成 · 转换方式: {converted.method}"
+            note = f"? AstrBot Math Render ?? ? ????: {converted.method}"
             image_path = await self.renderer.render_formula_card(
                 formula=converted.latex,
-                title="数学公式渲染",
+                title="??????",
                 note=note,
                 style_hint=self._text("default_style", DEFAULT_STYLE),
                 accent_color=self._text("default_accent_color", ""),
             )
         except Exception as exc:
             logger.exception("lateximg render failed")
-            yield event.plain_result(f"公式渲染失败: {exc}")
+            yield event.plain_result(f"??????: {exc}")
             return
 
         yield event.image_result(str(image_path))
 
-    @filter.command("mathsolveimg", alias=["解答渲染", "数学出图", "题目出图"])
+    @filter.command("mathsolveimg", alias=["????", "????", "????"])
     async def mathsolveimg(self, event: AstrMessageEvent):
         question = self._extract_payload(event.message_str, SOLVE_COMMANDS)
         if not question:
             yield event.plain_result(
-                "用法: /mathsolveimg <数学问题>\n"
-                "示例: /mathsolveimg 求解二次方程 x^2 - 5x + 6 = 0"
+                "??: /mathsolveimg <????>\n"
+                "??: /mathsolveimg ?????? x^2 - 5x + 6 = 0"
             )
             return
 
@@ -297,16 +343,120 @@ class MathRenderPlugin(Star):
             image_path = await self.renderer.render_solution_card(content)
         except Exception as exc:
             logger.exception("mathsolveimg render failed")
-            yield event.plain_result(f"解答出图失败: {exc}")
+            yield event.plain_result(f"??????: {exc}")
             return
 
         yield event.image_result(str(image_path))
 
-    @filter.command("mathimgcleanup", alias=["渲染清理", "公式清理"])
+    @filter.command("plot", alias=["mathplot", "functionplot"])
+    async def plot(self, event: AstrMessageEvent):
+        payload = self._extract_payload(event.message_str, PLOT_COMMANDS)
+        if not payload:
+            yield event.plain_result(
+                "??: /plot <???>\n"
+                "??: /plot sin(x)\n"
+                "??: /plot sin(x), cos(x)\n"
+                "??: /plot x^2 + y^2 = 1"
+            )
+            return
+        try:
+            parts = self.plotter.split_expressions(payload)
+            if len(parts) >= 2:
+                result = self.plotter.plot_multiple(payload)
+            elif self._looks_like_implicit_plot(payload):
+                result = self.plotter.plot_implicit(payload)
+            else:
+                result = self.plotter.plot_function(payload)
+        except Exception as exc:
+            logger.exception("plot command failed")
+            yield event.plain_result(f"????: {exc}")
+            return
+        yield event.image_result(str(result.path))
+
+    @filter.command("plot3d", alias=["surfaceplot"])
+    async def plot3d(self, event: AstrMessageEvent):
+        payload = self._extract_payload(event.message_str, PLOT3D_COMMANDS)
+        if not payload:
+            yield event.plain_result("??: /plot3d <z=f(x,y)>???: /plot3d sin(sqrt(x^2+y^2))")
+            return
+        try:
+            result = self.plotter.plot_surface(payload)
+        except Exception as exc:
+            logger.exception("plot3d command failed")
+            yield event.plain_result(f"??????: {exc}")
+            return
+        yield event.image_result(str(result.path))
+
+    @filter.command("polar", alias=["polarplot"])
+    async def polar(self, event: AstrMessageEvent):
+        payload = self._extract_payload(event.message_str, POLAR_COMMANDS)
+        if not payload:
+            yield event.plain_result("??: /polar <r=f(theta)>???: /polar sin(3*theta)")
+            return
+        try:
+            result = self.plotter.plot_polar(payload)
+        except Exception as exc:
+            logger.exception("polar command failed")
+            yield event.plain_result(f"???????: {exc}")
+            return
+        yield event.image_result(str(result.path))
+
+    @filter.command("parametric", alias=["paramplot"])
+    async def parametric(self, event: AstrMessageEvent):
+        payload = self._extract_payload(event.message_str, PARAMETRIC_COMMANDS)
+        parts = self.plotter.split_expressions(payload)
+        if len(parts) != 2:
+            yield event.plain_result("??: /parametric <x(t)>, <y(t)>???: /parametric cos(t), sin(t)")
+            return
+        try:
+            result = self.plotter.plot_parametric(parts[0], parts[1])
+        except Exception as exc:
+            logger.exception("parametric command failed")
+            yield event.plain_result(f"????????: {exc}")
+            return
+        yield event.image_result(str(result.path))
+
+    @filter.command("vector2d", alias=["vectorfield"])
+    async def vector2d(self, event: AstrMessageEvent):
+        payload = self._extract_payload(event.message_str, VECTOR_FIELD_COMMANDS)
+        parts = self.plotter.split_expressions(payload)
+        if len(parts) != 2:
+            yield event.plain_result("??: /vector2d <Fx(x,y)>, <Fy(x,y)>???: /vector2d -y, x")
+            return
+        try:
+            result = self.plotter.plot_vector_field_2d(parts[0], parts[1])
+        except Exception as exc:
+            logger.exception("vector2d command failed")
+            yield event.plain_result(f"???????: {exc}")
+            return
+        yield event.image_result(str(result.path))
+
+    @filter.command("parametric3d", alias=["param3d"])
+    async def parametric3d(self, event: AstrMessageEvent):
+        payload = self._extract_payload(event.message_str, PARAMETRIC3D_COMMANDS)
+        parts = self.plotter.split_expressions(payload)
+        if len(parts) != 3:
+            yield event.plain_result(
+                "??: /parametric3d <x(t)>, <y(t)>, <z(t)>???: /parametric3d cos(t), sin(t), t/5"
+            )
+            return
+        try:
+            result = self.plotter.plot_parametric_3d(parts[0], parts[1], parts[2])
+        except Exception as exc:
+            logger.exception("parametric3d command failed")
+            yield event.plain_result(f"??????????: {exc}")
+            return
+        yield event.image_result(str(result.path))
+
+    @filter.command("plotstatus")
+    async def plotstatus(self, event: AstrMessageEvent):
+        yield event.plain_result(self.plotter.status_text())
+
+    @filter.command("mathimgcleanup", alias=["????", "????"])
     async def mathimgcleanup(self, event: AstrMessageEvent):
         removed = await self.renderer.cleanup_temp_files(purge_all=True)
         self._debug("manual cleanup removed=%s", removed)
-        yield event.plain_result(f"已清理 {removed} 个渲染临时文件。")
+        yield event.plain_result(f"??? {removed} ????????")
 
     @filter.llm_tool(name="render_latex_formula")
     async def render_latex_formula_tool(
@@ -331,10 +481,10 @@ class MathRenderPlugin(Star):
         converted = await self._prepare_formula_for_render(event, latex)
         final_note = note.strip()
         if not final_note:
-            final_note = f"由 AstrBot Math Render 生成 · 转换方式: {converted.method}"
+            final_note = f"? AstrBot Math Render ?? ? ????: {converted.method}"
         image_path = await self.renderer.render_formula_card(
             formula=converted.latex,
-            title=title.strip() or "数学公式渲染",
+            title=title.strip() or "??????",
             note=final_note,
             style_hint=style_hint or self._text("default_style", DEFAULT_STYLE),
             accent_color=accent_color or self._text("default_accent_color", ""),
@@ -393,7 +543,7 @@ class MathRenderPlugin(Star):
         content = SolutionCardContent(
             question=question,
             answer=answer,
-            title=title.strip() or "数学解答",
+            title=title.strip() or "????",
             key_formula=key_formula,
             style_hint=style_hint or self._text("default_style", DEFAULT_STYLE),
             accent_color=accent_color or self._text("default_accent_color", ""),
@@ -408,10 +558,299 @@ class MathRenderPlugin(Star):
         yield event.image_result(str(image_path))
         yield "The rendered math solution card has been sent to the user. Keep follow-up text concise and avoid repeating the full answer."
 
+    @filter.llm_tool(name="plot_function")
+    async def plot_function_tool(
+        self,
+        event: AstrMessageEvent,
+        expression: str,
+        x_range: str = "",
+        title: str = "",
+        xlabel: str = "",
+        ylabel: str = "",
+    ):
+        """Draw a one-variable function graph y=f(x) and send the image to the user.
+
+        Args:
+            expression(string): Function expression in x, for example sin(x), x**2, or exp(-x**2).
+            x_range(string): Optional x range as "min,max", for example "-10,10".
+            title(string): Optional plot title.
+            xlabel(string): Optional x-axis label.
+            ylabel(string): Optional y-axis label.
+        """
+        try:
+            result = self.plotter.plot_function(
+                expression,
+                x_range=x_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+            )
+        except Exception as exc:
+            logger.exception("plot_function tool failed")
+            yield f"Plot failed: {exc}"
+            return
+        yield event.image_result(str(result.path))
+        yield result.description
+
+    @filter.llm_tool(name="plot_multiple")
+    async def plot_multiple_tool(
+        self,
+        event: AstrMessageEvent,
+        expressions: str,
+        x_range: str = "",
+        title: str = "",
+        xlabel: str = "",
+        ylabel: str = "",
+    ):
+        """Draw multiple one-variable function graphs in one coordinate system.
+
+        Args:
+            expressions(string): Comma-separated expressions in x, for example "sin(x), cos(x), x**2".
+            x_range(string): Optional x range as "min,max".
+            title(string): Optional plot title.
+            xlabel(string): Optional x-axis label.
+            ylabel(string): Optional y-axis label.
+        """
+        try:
+            result = self.plotter.plot_multiple(
+                expressions,
+                x_range=x_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+            )
+        except Exception as exc:
+            logger.exception("plot_multiple tool failed")
+            yield f"Plot failed: {exc}"
+            return
+        yield event.image_result(str(result.path))
+        yield result.description
+
+    @filter.llm_tool(name="plot_implicit")
+    async def plot_implicit_tool(
+        self,
+        event: AstrMessageEvent,
+        equation: str,
+        x_range: str = "",
+        y_range: str = "",
+        title: str = "",
+        xlabel: str = "",
+        ylabel: str = "",
+    ):
+        """Draw an implicit equation F(x,y)=0 or an equation containing '='.
+
+        Args:
+            equation(string): Equation such as "x**2+y**2-1" or "x**2+y**2=1".
+            x_range(string): Optional x range as "min,max".
+            y_range(string): Optional y range as "min,max".
+            title(string): Optional plot title.
+            xlabel(string): Optional x-axis label.
+            ylabel(string): Optional y-axis label.
+        """
+        try:
+            result = self.plotter.plot_implicit(
+                equation,
+                x_range=x_range,
+                y_range=y_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+            )
+        except Exception as exc:
+            logger.exception("plot_implicit tool failed")
+            yield f"Plot failed: {exc}"
+            return
+        yield event.image_result(str(result.path))
+        yield result.description
+
+    @filter.llm_tool(name="plot_polar")
+    async def plot_polar_tool(
+        self,
+        event: AstrMessageEvent,
+        expression: str,
+        theta_range: str = "",
+        title: str = "",
+    ):
+        """Draw a polar curve r=f(theta).
+
+        Args:
+            expression(string): Polar expression in theta, for example sin(3*theta).
+            theta_range(string): Optional theta range as "min,max"; pi is supported.
+            title(string): Optional plot title.
+        """
+        try:
+            result = self.plotter.plot_polar(expression, theta_range=theta_range, title=title)
+        except Exception as exc:
+            logger.exception("plot_polar tool failed")
+            yield f"Plot failed: {exc}"
+            return
+        yield event.image_result(str(result.path))
+        yield result.description
+
+    @filter.llm_tool(name="plot_parametric")
+    async def plot_parametric_tool(
+        self,
+        event: AstrMessageEvent,
+        x_expression: str,
+        y_expression: str,
+        t_range: str = "",
+        title: str = "",
+        xlabel: str = "",
+        ylabel: str = "",
+    ):
+        """Draw a 2D parametric curve x=f(t), y=g(t).
+
+        Args:
+            x_expression(string): x(t), for example cos(t).
+            y_expression(string): y(t), for example sin(t).
+            t_range(string): Optional t range as "min,max"; pi is supported.
+            title(string): Optional plot title.
+            xlabel(string): Optional x-axis label.
+            ylabel(string): Optional y-axis label.
+        """
+        try:
+            result = self.plotter.plot_parametric(
+                x_expression,
+                y_expression,
+                t_range=t_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+            )
+        except Exception as exc:
+            logger.exception("plot_parametric tool failed")
+            yield f"Plot failed: {exc}"
+            return
+        yield event.image_result(str(result.path))
+        yield result.description
+
+    @filter.llm_tool(name="plot_3d_function")
+    async def plot_3d_function_tool(
+        self,
+        event: AstrMessageEvent,
+        expression: str,
+        x_range: str = "",
+        y_range: str = "",
+        title: str = "",
+        xlabel: str = "",
+        ylabel: str = "",
+        zlabel: str = "",
+    ):
+        """Draw a 3D surface z=f(x,y).
+
+        Args:
+            expression(string): Surface expression in x and y, for example sin(sqrt(x**2+y**2)).
+            x_range(string): Optional x range as "min,max".
+            y_range(string): Optional y range as "min,max".
+            title(string): Optional plot title.
+            xlabel(string): Optional x-axis label.
+            ylabel(string): Optional y-axis label.
+            zlabel(string): Optional z-axis label.
+        """
+        try:
+            result = self.plotter.plot_surface(
+                expression,
+                x_range=x_range,
+                y_range=y_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+                zlabel=zlabel,
+            )
+        except Exception as exc:
+            logger.exception("plot_3d_function tool failed")
+            yield f"Plot failed: {exc}"
+            return
+        yield event.image_result(str(result.path))
+        yield result.description
+
+    @filter.llm_tool(name="plot_3d_parametric")
+    async def plot_3d_parametric_tool(
+        self,
+        event: AstrMessageEvent,
+        x_expression: str,
+        y_expression: str,
+        z_expression: str,
+        t_range: str = "",
+        title: str = "",
+        xlabel: str = "",
+        ylabel: str = "",
+        zlabel: str = "",
+    ):
+        """Draw a 3D parametric curve x=f(t), y=g(t), z=h(t).
+
+        Args:
+            x_expression(string): x(t), for example cos(t).
+            y_expression(string): y(t), for example sin(t).
+            z_expression(string): z(t), for example t/5.
+            t_range(string): Optional t range as "min,max"; pi is supported.
+            title(string): Optional plot title.
+            xlabel(string): Optional x-axis label.
+            ylabel(string): Optional y-axis label.
+            zlabel(string): Optional z-axis label.
+        """
+        try:
+            result = self.plotter.plot_parametric_3d(
+                x_expression,
+                y_expression,
+                z_expression,
+                t_range=t_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+                zlabel=zlabel,
+            )
+        except Exception as exc:
+            logger.exception("plot_3d_parametric tool failed")
+            yield f"Plot failed: {exc}"
+            return
+        yield event.image_result(str(result.path))
+        yield result.description
+
+    @filter.llm_tool(name="plot_vector_field_2d")
+    async def plot_vector_field_2d_tool(
+        self,
+        event: AstrMessageEvent,
+        x_expression: str,
+        y_expression: str,
+        x_range: str = "",
+        y_range: str = "",
+        title: str = "",
+        xlabel: str = "",
+        ylabel: str = "",
+    ):
+        """Draw a 2D vector field F=(Fx(x,y), Fy(x,y)).
+
+        Args:
+            x_expression(string): Fx(x,y), for example -y.
+            y_expression(string): Fy(x,y), for example x.
+            x_range(string): Optional x range as "min,max".
+            y_range(string): Optional y range as "min,max".
+            title(string): Optional plot title.
+            xlabel(string): Optional x-axis label.
+            ylabel(string): Optional y-axis label.
+        """
+        try:
+            result = self.plotter.plot_vector_field_2d(
+                x_expression,
+                y_expression,
+                x_range=x_range,
+                y_range=y_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+            )
+        except Exception as exc:
+            logger.exception("plot_vector_field_2d tool failed")
+            yield f"Plot failed: {exc}"
+            return
+        yield event.image_result(str(result.path))
+        yield result.description
+
     async def _solve_question(self, event: AstrMessageEvent, question: str) -> SolutionCardContent:
         provider_id = await self._get_current_provider_id(event)
         if not provider_id:
-            raise RuntimeError("当前会话没有可用的 Chat Provider。")
+            raise RuntimeError("????????? Chat Provider?")
 
         self._debug("solving question with provider=%s", provider_id)
         response = await self.context.llm_generate(
@@ -440,7 +879,7 @@ class MathRenderPlugin(Star):
     ) -> LatexConversionResult:
         normalized = normalize_latex_output(raw_formula)
         if not normalized:
-            raise RuntimeError("公式内容为空。")
+            raise RuntimeError("???????")
         if is_likely_latex(normalized):
             self._debug("formula treated as latex directly")
             return LatexConversionResult(normalized, "already_latex")
@@ -469,7 +908,7 @@ class MathRenderPlugin(Star):
                 errors.append(f"local conversion failed: {exc}")
                 self._debug("latexify local failed: %s", exc)
                 if backend == "local":
-                    raise RuntimeError(f"本地表达式转 LaTeX 失败: {exc}") from exc
+                    raise RuntimeError(f"?????? LaTeX ??: {exc}") from exc
 
         llm_fallback_enabled = self._bool("allow_llm_latexify_fallback", True)
         if backend == "llm" or (backend == "auto" and llm_fallback_enabled):
@@ -481,10 +920,10 @@ class MathRenderPlugin(Star):
                 errors.append(f"llm conversion failed: {exc}")
                 self._debug("latexify llm failed: %s", exc)
                 if backend == "llm":
-                    raise RuntimeError(f"LLM 表达式转 LaTeX 失败: {exc}") from exc
+                    raise RuntimeError(f"LLM ???? LaTeX ??: {exc}") from exc
 
-        joined = "；".join(errors) if errors else "没有可用的表达式转 LaTeX 后端"
-        raise RuntimeError(f"表达式转 LaTeX 失败：{joined}")
+        joined = "?".join(errors) if errors else "????????? LaTeX ??"
+        raise RuntimeError(f"???? LaTeX ???{joined}")
 
     async def _llm_convert_expression_to_latex(
         self,
@@ -493,7 +932,7 @@ class MathRenderPlugin(Star):
     ) -> LatexConversionResult:
         provider_id = await self._get_current_provider_id(event)
         if not provider_id:
-            raise RuntimeError("当前会话没有可用的 Chat Provider。")
+            raise RuntimeError("????????? Chat Provider?")
 
         response = await self.context.llm_generate(
             chat_provider_id=provider_id,
@@ -502,7 +941,7 @@ class MathRenderPlugin(Star):
         )
         latex = normalize_latex_output(response.completion_text or "")
         if not latex:
-            raise RuntimeError("LLM 没有返回可用的 LaTeX 结果。")
+            raise RuntimeError("LLM ??????? LaTeX ???")
         return LatexConversionResult(latex=latex, method="llm")
 
     async def _maybe_send_pre_reply(
@@ -545,18 +984,18 @@ class MathRenderPlugin(Star):
     ) -> str:
         provider_id = await self._get_current_provider_id(event)
         if not provider_id:
-            raise RuntimeError("当前会话没有可用的 Chat Provider。")
+            raise RuntimeError("????????? Chat Provider?")
 
         persona_prompt = await self._resolve_persona_prompt(event)
         system_prompt = self._text("pre_reply_system_prompt", PRE_REPLY_SYSTEM_PROMPT)
         if persona_prompt:
             system_prompt = f"{persona_prompt}\n\n{system_prompt}"
 
-        scene_name = "公式渲染" if scene == "formula" else "解答出图"
+        scene_name = "????" if scene == "formula" else "????"
         prompt = self._apply_prompt_template(
             self._text(
                 "pre_reply_user_prompt",
-                "场景：{{scene_name}}\n用户原始内容：{{original_text}}\n请按当前人设风格，回复一句自然的话，表示你已经开始处理并稍后发图。",
+                "???{{scene_name}}\n???????{{original_text}}\n?????????????????????????????????",
             ),
             scene_name=scene_name,
             original_text=(original_text or "").strip(),
@@ -568,7 +1007,7 @@ class MathRenderPlugin(Star):
         )
         text = (response.completion_text or "").strip()
         if not text:
-            raise RuntimeError("LLM 预回复为空。")
+            raise RuntimeError("LLM ??????")
         return text
 
     async def _resolve_persona_prompt(self, event: AstrMessageEvent) -> str:
@@ -616,8 +1055,8 @@ class MathRenderPlugin(Star):
 
     def _fallback_pre_reply(self, scene: str) -> str:
         if scene == "formula":
-            return self._text("pre_reply_fallback_text_formula", "我来把这个公式整理成清晰的图片，稍等一下。")
-        return self._text("pre_reply_fallback_text_solution", "我先整理思路并生成解答图，马上发你。")
+            return self._text("pre_reply_fallback_text_formula", "?????????????????????")
+        return self._text("pre_reply_fallback_text_solution", "??????????????????")
 
     def _clean_pre_reply(self, text: str, fallback: str) -> str:
         cleaned = re.sub(r"\s+", " ", (text or "").strip())
@@ -661,11 +1100,43 @@ class MathRenderPlugin(Star):
         return any(
             re.search(pattern, candidate, re.IGNORECASE)
             for pattern in (
-                r"[△∠⊥∥]",
-                r"(圆|半圆|弧|切线|弦|半径|直径|三角形|四边形|平行|垂直|中点|角平分线)",
+                r"[????]",
+                r"(?|??|?|??|?|??|??|???|???|??|??|??|????)",
                 r"(triangle|circle|angle|perpendicular|parallel|geometry)",
             )
         )
+
+    def _looks_like_plot(self, text: str) -> bool:
+        candidate = (text or "").strip()
+        if not candidate:
+            return False
+
+        lowered = candidate.lower()
+        custom_keywords = [
+            item.strip().lower()
+            for item in self._text("plot_keywords", "\n".join(DEFAULT_PLOT_KEYWORDS)).splitlines()
+            if item.strip()
+        ]
+        if any(keyword in lowered for keyword in custom_keywords):
+            return True
+
+        return any(
+            re.search(pattern, candidate, re.IGNORECASE)
+            for pattern in (
+                r"(plot|graph|draw).{0,24}(function|curve|surface|vector)",
+                r"(function|curve|surface|polar|parametric|vector field).{0,24}(plot|graph)",
+                r"\by\s*=\s*[A-Za-z0-9_\\+\-*/^().]+",
+                r"\bz\s*=\s*[A-Za-z0-9_\\+\-*/^().]+",
+            )
+        )
+
+    def _looks_like_implicit_plot(self, text: str) -> bool:
+        candidate = (text or "").strip()
+        if not candidate:
+            return False
+        if "=" in candidate:
+            return True
+        return bool(re.search(r"(?<![A-Za-z])y(?![A-Za-z])", candidate))
 
     def _looks_like_math_image_request(self, text: str) -> bool:
         candidate = (text or "").strip()
@@ -681,10 +1152,10 @@ class MathRenderPlugin(Star):
         return any(
             re.search(pattern, candidate, re.IGNORECASE)
             for pattern in (
-                r"(这|这个|这道).{0,4}题",
-                r"(怎么|如何).{0,4}(做|解|求|证)",
-                r"(帮我|麻烦).{0,4}(做|解|算|讲|分析)",
-                r"(求解|解答|讲解|思路|过程|答案|证明|求证)",
+                r"(?|??|??).{0,4}?",
+                r"(??|??).{0,4}(?|?|?|?)",
+                r"(??|??).{0,4}(?|?|?|?|??)",
+                r"(??|??|??|??|??|??|??|??)",
             )
         )
 

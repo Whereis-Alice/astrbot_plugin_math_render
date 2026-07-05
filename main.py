@@ -526,8 +526,11 @@ class MathRenderPlugin(Star):
             accent_color=accent_color or self._text("default_accent_color", ""),
         )
         self._debug("llm tool render_latex_formula sent image=%s", image_path)
-        yield self._image_result_for_send(event, image_path)
-        yield "The rendered math formula image has been sent to the user. Keep any follow-up text brief."
+        fallback = await self._send_image_from_tool(event, image_path)
+        if fallback:
+            yield fallback
+            return
+        yield None
 
     @filter.llm_tool(name="render_math_solution_card")
     async def render_math_solution_card_tool(
@@ -604,8 +607,11 @@ class MathRenderPlugin(Star):
         content = await self._materialize_plot_for_card(content)
         image_path = await self.renderer.render_solution_card(content)
         self._debug("llm tool render_math_solution_card sent image=%s", image_path)
-        yield self._image_result_for_send(event, image_path)
-        yield "The rendered math solution card has been sent to the user. Keep follow-up text concise and avoid repeating the full answer."
+        fallback = await self._send_image_from_tool(event, image_path)
+        if fallback:
+            yield fallback
+            return
+        yield None
 
     @filter.llm_tool(name="plot_function")
     async def plot_function_tool(
@@ -638,8 +644,11 @@ class MathRenderPlugin(Star):
             logger.exception("plot_function tool failed")
             yield f"Plot failed: {exc}"
             return
-        yield self._image_result_for_send(event, result.path)
-        yield result.description
+        fallback = await self._send_image_from_tool(event, result.path, result.description)
+        if fallback:
+            yield fallback
+            return
+        yield None
 
     @filter.llm_tool(name="plot_multiple")
     async def plot_multiple_tool(
@@ -672,8 +681,11 @@ class MathRenderPlugin(Star):
             logger.exception("plot_multiple tool failed")
             yield f"Plot failed: {exc}"
             return
-        yield self._image_result_for_send(event, result.path)
-        yield result.description
+        fallback = await self._send_image_from_tool(event, result.path, result.description)
+        if fallback:
+            yield fallback
+            return
+        yield None
 
     @filter.llm_tool(name="plot_implicit")
     async def plot_implicit_tool(
@@ -709,8 +721,11 @@ class MathRenderPlugin(Star):
             logger.exception("plot_implicit tool failed")
             yield f"Plot failed: {exc}"
             return
-        yield self._image_result_for_send(event, result.path)
-        yield result.description
+        fallback = await self._send_image_from_tool(event, result.path, result.description)
+        if fallback:
+            yield fallback
+            return
+        yield None
 
     @filter.llm_tool(name="plot_polar")
     async def plot_polar_tool(
@@ -733,8 +748,11 @@ class MathRenderPlugin(Star):
             logger.exception("plot_polar tool failed")
             yield f"Plot failed: {exc}"
             return
-        yield self._image_result_for_send(event, result.path)
-        yield result.description
+        fallback = await self._send_image_from_tool(event, result.path, result.description)
+        if fallback:
+            yield fallback
+            return
+        yield None
 
     @filter.llm_tool(name="plot_parametric")
     async def plot_parametric_tool(
@@ -770,8 +788,11 @@ class MathRenderPlugin(Star):
             logger.exception("plot_parametric tool failed")
             yield f"Plot failed: {exc}"
             return
-        yield self._image_result_for_send(event, result.path)
-        yield result.description
+        fallback = await self._send_image_from_tool(event, result.path, result.description)
+        if fallback:
+            yield fallback
+            return
+        yield None
 
     @filter.llm_tool(name="plot_3d_function")
     async def plot_3d_function_tool(
@@ -810,8 +831,11 @@ class MathRenderPlugin(Star):
             logger.exception("plot_3d_function tool failed")
             yield f"Plot failed: {exc}"
             return
-        yield self._image_result_for_send(event, result.path)
-        yield result.description
+        fallback = await self._send_image_from_tool(event, result.path, result.description)
+        if fallback:
+            yield fallback
+            return
+        yield None
 
     @filter.llm_tool(name="plot_3d_parametric")
     async def plot_3d_parametric_tool(
@@ -853,8 +877,11 @@ class MathRenderPlugin(Star):
             logger.exception("plot_3d_parametric tool failed")
             yield f"Plot failed: {exc}"
             return
-        yield self._image_result_for_send(event, result.path)
-        yield result.description
+        fallback = await self._send_image_from_tool(event, result.path, result.description)
+        if fallback:
+            yield fallback
+            return
+        yield None
 
     @filter.llm_tool(name="plot_vector_field_2d")
     async def plot_vector_field_2d_tool(
@@ -893,8 +920,11 @@ class MathRenderPlugin(Star):
             logger.exception("plot_vector_field_2d tool failed")
             yield f"Plot failed: {exc}"
             return
-        yield self._image_result_for_send(event, result.path)
-        yield result.description
+        fallback = await self._send_image_from_tool(event, result.path, result.description)
+        if fallback:
+            yield fallback
+            return
+        yield None
 
     async def _solve_question(self, event: AstrMessageEvent, question: str) -> SolutionCardContent:
         provider_id = await self._get_current_provider_id(event)
@@ -1098,10 +1128,10 @@ class MathRenderPlugin(Star):
             self._debug("failed to resolve current provider: %s", exc)
             return None
 
-    def _image_result_for_send(self, event: AstrMessageEvent, image_path: str | Path):
+    def _image_chain_for_send(self, image_path: str | Path) -> tuple[MessageChain | None, Path | None]:
         prepared_path = self._prepare_image_for_send(Path(image_path))
         if prepared_path is None:
-            return event.plain_result("图片已经生成，但发送前找不到图片文件；请查看 AstrBot 日志。")
+            return None, None
 
         transport = self._text("send_image_transport", "file").lower()
         if transport == "base64":
@@ -1113,11 +1143,73 @@ class MathRenderPlugin(Star):
                 len(data),
                 len(encoded),
             )
-            return event.make_result().base64_image(encoded)
+            return MessageChain().base64_image(encoded), prepared_path
 
         size = prepared_path.stat().st_size
         self._debug("image send payload prepared transport=file path=%s bytes=%s", prepared_path, size)
-        return event.make_result().file_image(str(prepared_path))
+        return MessageChain().file_image(str(prepared_path)), prepared_path
+
+    def _image_result_for_send(self, event: AstrMessageEvent, image_path: str | Path):
+        chain, _ = self._image_chain_for_send(image_path)
+        if chain is None:
+            return event.plain_result("图片已经生成，但发送前找不到图片文件；请查看 AstrBot 日志。")
+        return event.chain_result(chain.chain)
+
+    async def _send_image_from_tool(
+        self,
+        event: AstrMessageEvent,
+        image_path: str | Path,
+        description: str = "",
+    ) -> str | None:
+        chain, prepared_path = self._image_chain_for_send(image_path)
+        if chain is None or prepared_path is None:
+            logger.error("math_render tool image send failed: prepared image is missing for %s", image_path)
+            return "图片已经生成，但发送前找不到图片文件；请查看 AstrBot 日志。"
+
+        session = str(getattr(event, "unified_msg_origin", "") or "")
+        errors: list[str] = []
+        send_message = getattr(getattr(self, "context", None), "send_message", None)
+        if callable(send_message) and session:
+            try:
+                self._debug(
+                    "image direct send attempt method=context session=%s path=%s",
+                    session,
+                    prepared_path,
+                )
+                sent = await send_message(session, chain)
+                self._debug(
+                    "image direct send complete method=context sent=%s session=%s path=%s",
+                    sent,
+                    session,
+                    prepared_path,
+                )
+                if sent:
+                    return None
+                errors.append("context.send_message returned False")
+            except Exception as exc:
+                errors.append(f"context.send_message failed: {exc}")
+                logger.exception("math_render tool image context send failed: path=%s", prepared_path)
+
+        try:
+            self._debug("image direct send attempt method=event path=%s", prepared_path)
+            await event.send(chain)
+            self._debug("image direct send complete method=event path=%s", prepared_path)
+            return None
+        except Exception as exc:
+            errors.append(f"event.send failed: {exc}")
+            logger.exception("math_render tool image event send failed: path=%s", prepared_path)
+
+        fallback_text = (
+            "The image was rendered successfully, but the plugin could not send it directly. "
+            "You MUST call `send_message_to_user` now with "
+            f"`messages=[{{\"type\":\"image\",\"path\":\"{prepared_path}\"}}]` to deliver it to the user. "
+            f"Rendered image path: {prepared_path}"
+        )
+        if errors:
+            fallback_text += "\n\nDirect send errors: " + "; ".join(errors)
+        if description:
+            fallback_text += f"\n\nImage description: {description}"
+        return fallback_text
 
     def _prepare_image_for_send(self, image_path: Path) -> Path | None:
         if not image_path.exists():

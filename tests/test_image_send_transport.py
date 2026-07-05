@@ -1,4 +1,5 @@
 import base64
+import asyncio
 import sys
 import tempfile
 import unittest
@@ -12,11 +13,40 @@ from astrbot_plugin_math_render.main import MathRenderPlugin
 
 
 class FakeEvent:
+    unified_msg_origin = "default:GroupMessage:10000"
+
+    def __init__(self, *, raise_error: Exception | None = None) -> None:
+        self.sent_chains = []
+        self.raise_error = raise_error
+
     def make_result(self) -> MessageEventResult:
         return MessageEventResult()
 
     def plain_result(self, text: str) -> MessageEventResult:
         return MessageEventResult().message(text)
+
+    def chain_result(self, chain) -> MessageEventResult:
+        result = MessageEventResult()
+        result.chain = chain
+        return result
+
+    async def send(self, chain) -> None:
+        if self.raise_error:
+            raise self.raise_error
+        self.sent_chains.append(chain)
+
+
+class FakeContext:
+    def __init__(self, *, result: bool = True, raise_error: Exception | None = None) -> None:
+        self.result = result
+        self.raise_error = raise_error
+        self.calls = []
+
+    async def send_message(self, session, chain) -> bool:
+        self.calls.append((session, chain))
+        if self.raise_error:
+            raise self.raise_error
+        return self.result
 
 
 class DictConfig(dict):
@@ -40,6 +70,7 @@ class ImageSendTransportTests(unittest.TestCase):
     def _plugin(self, **config: object) -> MathRenderPlugin:
         plugin = MathRenderPlugin.__new__(MathRenderPlugin)
         plugin.config = DictConfig(config)
+        plugin.context = FakeContext()
         return plugin
 
     def test_default_image_transport_uses_file_path_component(self) -> None:
@@ -57,6 +88,45 @@ class ImageSendTransportTests(unittest.TestCase):
         image = result.chain[0]
         self.assertTrue(image.file.startswith("base64://"))
         self.assertFalse(getattr(image, "path", ""))
+
+    def test_tool_image_send_uses_context_send_message(self) -> None:
+        plugin = self._plugin()
+        event = FakeEvent()
+
+        fallback = asyncio.run(plugin._send_image_from_tool(event, self.image_path))
+
+        self.assertIsNone(fallback)
+        self.assertEqual(len(plugin.context.calls), 1)
+        session, chain = plugin.context.calls[0]
+        self.assertEqual(session, event.unified_msg_origin)
+        self.assertEqual(chain.chain[0].path, str(self.image_path))
+        self.assertEqual(event.sent_chains, [])
+
+    def test_tool_image_send_falls_back_to_event_send(self) -> None:
+        plugin = self._plugin()
+        plugin.context = FakeContext(result=False)
+        event = FakeEvent()
+
+        fallback = asyncio.run(plugin._send_image_from_tool(event, self.image_path))
+
+        self.assertIsNone(fallback)
+        self.assertEqual(len(plugin.context.calls), 1)
+        self.assertEqual(len(event.sent_chains), 1)
+        self.assertEqual(event.sent_chains[0].chain[0].path, str(self.image_path))
+
+    def test_tool_image_send_failure_returns_builtin_tool_instruction(self) -> None:
+        plugin = self._plugin()
+        plugin.context = FakeContext(raise_error=RuntimeError("boom"))
+        event = FakeEvent(raise_error=RuntimeError("event boom"))
+
+        fallback = asyncio.run(plugin._send_image_from_tool(event, self.image_path, "plot ready"))
+
+        self.assertIsNotNone(fallback)
+        self.assertIn("send_message_to_user", fallback)
+        self.assertIn(str(self.image_path), fallback)
+        self.assertIn("context.send_message failed", fallback)
+        self.assertIn("event.send failed", fallback)
+        self.assertIn("plot ready", fallback)
 
 
 if __name__ == "__main__":

@@ -230,6 +230,7 @@ DEFAULT_FREE_LAYOUT_MARKDOWN_PROMPT = """当你希望把整张图卡排得更自
 - 把 `layout_mode` 设为 `free`
 - 把主要内容写入 `markdown_content`
 - `markdown_content` 允许使用 Markdown 标题、列表、强调、引用、表格，也允许混合 `$...$` 和 `$$...$$` 数学公式
+- 如果同时传入 `geometry_scene_json` 或 `plot_spec_json`，图会由插件单独插入；不要在 `markdown_content` 末尾留下“几何示意图：”“函数图像：”“如下图所示：”这类空占位，正文必须包含完整证明或解题步骤
 - 适合证明题、讲解题、长推导、图文混合说明、希望更自由排版的场景
 - 如果只是标准问答、短解题、结构清晰的题目，也可以继续使用 `structured` 布局"""
 
@@ -561,7 +562,7 @@ class MathRenderPlugin(Star):
             style_hint(string): Optional style hint such as paper, notebook, blackboard, aurora, minimal, or classroom.
             accent_color(string): Optional accent color in hex form such as #16A34A.
             layout_mode(string): Optional layout mode. Use `structured` for fixed sections, or `free` for Markdown-driven free layout.
-            markdown_content(string): Optional Markdown body used when free layout is desired. Supports headings, lists, emphasis, tables, and LaTeX math.
+            markdown_content(string): Optional Markdown body used when free layout is desired. Supports headings, lists, emphasis, tables, and LaTeX math. When geometry_scene_json or plot_spec_json is provided, do not leave dangling placeholders such as "几何示意图:" or "see the graph below"; include the complete solution or proof text.
             geometry_scene_json(string): Optional geometry scene JSON string for triangles, circles, auxiliary lines, angle marks, and point-relation diagrams. `points` may be the canonical array or a compact object map like {"A":[0,0]}.
             geometry_caption(string): Optional caption shown below the geometry diagram.
             geometry_position(string): Optional geometry placement hint such as `before_content`, `after_question`, `after_key_formula`, `before_answer`, `after_answer`, `after_steps`, `after_final_answer`, or `after_content`.

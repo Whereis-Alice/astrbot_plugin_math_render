@@ -79,7 +79,7 @@
       "llm_render_layout_prompt": {
         "type": "text",
         "description": "LLM 自由布局图卡提示模板",
-        "default": "当你希望把整张图卡排得更自然、更像讲义或笔记，而不是固定分成“题目 / 关键公式 / 解答 / 最终答案”几个区块时，请这样做：\n- 把 `layout_mode` 设为 `free`\n- 把主要内容写入 `markdown_content`\n- `markdown_content` 允许使用 Markdown 标题、列表、强调、引用、表格，也允许混合 `$...$` 和 `$$...$$` 数学公式\n- 适合证明题、讲解题、长推导、图文混合说明、希望更自由排版的场景\n- 如果只是标准问答、短解题、结构清晰的题目，也可以继续使用 `structured` 布局",
+        "default": "当你希望把整张图卡排得更自然、更像讲义或笔记，而不是固定分成“题目 / 关键公式 / 解答 / 最终答案”几个区块时，请这样做：\n- 把 `layout_mode` 设为 `free`\n- 把主要内容写入 `markdown_content`\n- `markdown_content` 允许使用 Markdown 标题、列表、强调、引用、表格，也允许混合 `$...$` 和 `$$...$$` 数学公式\n- 如果同时传入 `geometry_scene_json` 或 `plot_spec_json`，图会由插件单独插入；不要在 `markdown_content` 末尾留下“几何示意图：”“函数图像：”“如下图所示：”这类空占位，正文必须包含完整证明或解题步骤\n- 适合证明题、讲解题、长推导、图文混合说明、希望更自由排版的场景\n- 如果只是标准问答、短解题、结构清晰的题目，也可以继续使用 `structured` 布局",
         "hint": "方便你按自己的风格调整自由排版提示。"
       },
       "llm_render_layout_mode": {
@@ -1195,7 +1195,7 @@
   "llm_render_layout_prompt": {
     "type": "text",
     "description": "LLM 自由布局图卡提示模板",
-    "default": "当你希望把整张图卡排得更自然、更像讲义或笔记，而不是固定分成“题目 / 关键公式 / 解答 / 最终答案”几个区块时，请这样做：\n- 把 `layout_mode` 设为 `free`\n- 把主要内容写入 `markdown_content`\n- `markdown_content` 允许使用 Markdown 标题、列表、强调、引用、表格，也允许混合 `$...$` 和 `$$...$$` 数学公式\n- 适合证明题、讲解题、长推导、图文混合说明、希望更自由排版的场景\n- 如果只是标准问答、短解题、结构清晰的题目，也可以继续使用 `structured` 布局",
+    "default": "当你希望把整张图卡排得更自然、更像讲义或笔记，而不是固定分成“题目 / 关键公式 / 解答 / 最终答案”几个区块时，请这样做：\n- 把 `layout_mode` 设为 `free`\n- 把主要内容写入 `markdown_content`\n- `markdown_content` 允许使用 Markdown 标题、列表、强调、引用、表格，也允许混合 `$...$` 和 `$$...$$` 数学公式\n- 如果同时传入 `geometry_scene_json` 或 `plot_spec_json`，图会由插件单独插入；不要在 `markdown_content` 末尾留下“几何示意图：”“函数图像：”“如下图所示：”这类空占位，正文必须包含完整证明或解题步骤\n- 适合证明题、讲解题、长推导、图文混合说明、希望更自由排版的场景\n- 如果只是标准问答、短解题、结构清晰的题目，也可以继续使用 `structured` 布局",
     "hint": "方便你按自己的风格调整自由排版提示。",
     "invisible": true
   },

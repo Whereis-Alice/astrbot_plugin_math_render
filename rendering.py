@@ -1905,7 +1905,7 @@ class MathRenderService:
     def _build_solution_markdown(self, content: SolutionCardContent) -> str:
         custom = self._normalize_rich_text(content.markdown_content)
         if custom:
-            return custom
+            return self._strip_dangling_visual_placeholder(custom, content)
 
         blocks: list[str] = []
         if content.question.strip():
@@ -1926,6 +1926,57 @@ class MathRenderService:
             caption = (content.geometry_caption or "").strip() or self._text("geometry_section_default_caption", "按题意生成的几何关系图")
             blocks.append(f"> {caption}")
         return "\n\n".join(blocks)
+
+    def _strip_dangling_visual_placeholder(self, markdown: str, content: SolutionCardContent) -> str:
+        if not (content.geometry_scene or content.plot_spec or content.plot_image_path):
+            return markdown
+
+        placeholder_labels = {
+            "几何图",
+            "几何示意图",
+            "示意图",
+            "辅助图",
+            "图示",
+            "图形",
+            "图像",
+            "函数图像",
+            "函数图",
+            "绘图",
+            "如下图",
+            "如下图所示",
+            "如图所示",
+            "diagram",
+            "figure",
+            "graph",
+            "plot",
+        }
+        lines = markdown.rstrip().splitlines()
+        changed = False
+
+        while lines:
+            line = lines[-1].strip()
+            if not line:
+                lines.pop()
+                changed = True
+                continue
+
+            cleaned = re.sub(r"^\s{0,3}(?:#{1,6}|[-*+>]|\d+[.)])\s*", "", line)
+            cleaned = cleaned.strip(" *_`~")
+            normalized = re.sub(r"\s+", "", cleaned).strip(":：。.!！?？")
+            normalized_lower = normalized.lower()
+
+            if normalized in placeholder_labels or normalized_lower in placeholder_labels:
+                lines.pop()
+                changed = True
+                continue
+            break
+
+        if not changed:
+            return markdown
+
+        cleaned_markdown = "\n".join(lines).strip()
+        self._debug("stripped dangling visual placeholder from free markdown")
+        return cleaned_markdown
 
     def _resolve_layout_mode(self, content: SolutionCardContent) -> str:
         configured = self._text("llm_render_layout_mode", "auto").lower()

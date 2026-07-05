@@ -18,7 +18,12 @@ from PIL import UnidentifiedImageError
 
 from astrbot.api import html_renderer, logger
 
-from .geometry import DEFAULT_GEOMETRY_LABEL, GeometryRenderer
+try:
+    from .config_utils import get_config_value
+    from .geometry import DEFAULT_GEOMETRY_LABEL, GeometryRenderer
+except ImportError:  # pragma: no cover
+    from config_utils import get_config_value
+    from geometry import DEFAULT_GEOMETRY_LABEL, GeometryRenderer
 
 try:
     from astrbot.core.utils.astrbot_path import get_astrbot_data_path
@@ -2030,25 +2035,25 @@ class MathRenderService:
         return f"rgba({red}, {green}, {blue}, {alpha:.2f})"
 
     def _text(self, key: str, default: str) -> str:
-        value = self._config.get(key, default)
+        value = get_config_value(self._config, key, default)
         return str(value).strip() if value is not None else default
 
     def _int(self, key: str, default: int) -> int:
-        value = self._config.get(key, default)
+        value = get_config_value(self._config, key, default)
         try:
             return int(value)
         except (TypeError, ValueError):
             return default
 
     def _float(self, key: str, default: float) -> float:
-        value = self._config.get(key, default)
+        value = get_config_value(self._config, key, default)
         try:
             return float(value)
         except (TypeError, ValueError):
             return default
 
     def _bool(self, key: str, default: bool) -> bool:
-        value = self._config.get(key, default)
+        value = get_config_value(self._config, key, default)
         if isinstance(value, bool):
             return value
         if isinstance(value, str):

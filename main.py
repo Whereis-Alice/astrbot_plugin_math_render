@@ -12,6 +12,7 @@ from astrbot.api.message_components import Image
 from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star
 
+from .config_utils import get_config_value
 from .conversion import (
     LATEXIFY_SYSTEM_PROMPT,
     LatexConversionResult,
@@ -1536,18 +1537,18 @@ class MathRenderPlugin(Star):
             logger.debug("[math_render] " + message, *args)
 
     def _text(self, key: str, default: str) -> str:
-        value = self.config.get(key, default)
+        value = get_config_value(self.config, key, default)
         return str(value).strip() if value is not None else default
 
     def _int(self, key: str, default: int) -> int:
-        value = self.config.get(key, default)
+        value = get_config_value(self.config, key, default)
         try:
             return int(value)
         except (TypeError, ValueError):
             return default
 
     def _bool(self, key: str, default: bool) -> bool:
-        value = self.config.get(key, default)
+        value = get_config_value(self.config, key, default)
         if isinstance(value, bool):
             return value
         if isinstance(value, str):

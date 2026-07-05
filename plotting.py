@@ -17,6 +17,11 @@ import sympy as sp
 from matplotlib import font_manager
 from sympy import SympifyError, lambdify, latex, symbols, sympify
 
+try:
+    from .config_utils import get_config_value
+except ImportError:  # pragma: no cover
+    from config_utils import get_config_value
+
 
 PLOT_SAFE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_\s+\-*/^().,=<>|:]+$")
 PLOT_BLOCKED_TOKENS = (
@@ -626,25 +631,25 @@ class MathPlotService:
         self._debug("plot font selected: %s", chosen)
 
     def _text(self, key: str, default: str) -> str:
-        value = self._config.get(key, default)
+        value = get_config_value(self._config, key, default)
         return str(value).strip() if value is not None else default
 
     def _int(self, key: str, default: int) -> int:
-        value = self._config.get(key, default)
+        value = get_config_value(self._config, key, default)
         try:
             return int(value)
         except (TypeError, ValueError):
             return default
 
     def _float(self, key: str, default: float) -> float:
-        value = self._config.get(key, default)
+        value = get_config_value(self._config, key, default)
         try:
             return float(value)
         except (TypeError, ValueError):
             return default
 
     def _bool(self, key: str, default: bool) -> bool:
-        value = self._config.get(key, default)
+        value = get_config_value(self._config, key, default)
         if isinstance(value, bool):
             return value
         if isinstance(value, str):

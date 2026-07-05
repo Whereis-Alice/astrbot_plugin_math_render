@@ -1,42 +1,29 @@
 # AstrBot Math Render
 
-一个面向 AstrBot 的数学渲染插件，目标是把“能算”升级成“能清晰交付”。
+面向 AstrBot 的数学出图插件。它把公式、解题过程、几何辅助图和函数图像整理成清晰的图片卡片，适合 QQ/OneBot 这类不方便直接展示 LaTeX 的聊天场景。
 
-它不仅能渲染 LaTeX 公式，还能在数学题、证明题、识图题里输出高质量解答图卡；对于几何题，还支持通过场景 JSON 自动绘制三角形、圆、辅助线、角标和点位关系图。
+## 能做什么
 
-## 适合什么场景
+- 渲染单个 LaTeX 公式或普通数学表达式。
+- 把数学题解答整理成可转发、可保存的图片卡片。
+- 几何题自动生成示意图，并嵌入同一张解题图卡。
+- 函数、曲线、隐式方程、极坐标、参数曲线、三维曲面和向量场绘图。
+- 识图数学题时提醒 LLM 优先调用出图工具。
+- 出图失败时保留文字答案，并在日志里记录原因，方便排查。
 
-- 聊天平台本身不支持 LaTeX，需要把 `1/2`、`sqrt(x)` 这类表达式转成清晰图片
-- 数学题、证明题、推导题希望直接生成“可转发、可截图、可保存”的解答图
-- 用户发来题目截图，希望模型在识图后直接出图，而不是只给一段文本
-- 几何题需要辅助图，想让 LLM 在解答时自动决定是否顺便画图
-- 需要自己调 prompt、调风格、调字号、调 DPI、调几何图配色
+## 常用命令
 
-## 核心功能
-
-- 强化 LaTeX 数学公式渲染，输出高质量 PNG
-- `/lateximg` 同时支持原生 LaTeX 和普通表达式自动转 LaTeX
-- `/mathsolveimg` 支持“命令 + 数学题”强制触发解答出图
-- LLM 可在普通对话中主动调用工具，把数学答案整理成图片
-- 识图场景下可提醒 LLM：如果图里是数学题/几何题，可以直接调用本插件
-- 支持 Markdown + MathJax 混排
-- 自动修复常见渲染问题：
-  - 文本里裸写 `\frac`、`\sqrt`、`\geq` 不显示
-  - LLM 把换行写成字面量 `\n`
-- 几何题支持 `SymPy.geometry + Matplotlib + 场景 JSON`
-- 空几何场景会自动跳过，疑似被错误 viewport 裁空时会先去掉 viewport 再重画一次
-- LLM 或工具参数现在可以为每张解答图单独安排几何图位置
-- 兼容一部分旧式 `GeometryScene/setup/measurements/rightAngle/labels` 几何 DSL，会自动翻译成当前 scene 渲染
-- 兼容更宽松的 scene JSON 变体，例如 `point.id`、`angle_marks.arms/mark`、`style: dashed/thick` 与 `semicircle_upper`
-- 临时文件统一放在插件专属目录，并支持自动清理
-- 支持输出 AstrBot 调试级别日志，方便排错
-
-## 命令
-
-### 1. 公式渲染
+### 公式转图
 
 ```text
-/lateximg <LaTeX 公式或普通数学表达式>
+/lateximg <LaTeX 公式或普通表达式>
+```
+
+示例：
+
+```text
+/lateximg \int_0^1 x^2\,dx = \frac{1}{3}
+/lateximg sqrt(x^2+1)
 ```
 
 别名：
@@ -49,18 +36,17 @@
 - `/表达式渲染`
 - `/公式转图`
 
-示例：
-
-```text
-/lateximg \int_0^1 x^2\,dx = \frac{1}{3}
-/lateximg 1/2
-/lateximg sqrt(x^2+1)
-```
-
-### 2. 解答出图
+### 解题图卡
 
 ```text
 /mathsolveimg <数学题>
+```
+
+示例：
+
+```text
+/mathsolveimg 求解方程 x^2 - 5x + 6 = 0
+/mathsolveimg 用几何方法证明基本不等式
 ```
 
 别名：
@@ -69,324 +55,7 @@
 - `/数学出图`
 - `/题目出图`
 
-示例：
-
-```text
-/mathsolveimg 求解二次方程 x^2 - 5x + 6 = 0
-/mathsolveimg 证明二阶柯西不等式
-/mathsolveimg 用几何方法证明基本不等式
-```
-
-### 3. 清理临时文件
-
-```text
-/mathimgcleanup
-```
-
-别名：
-
-- `/渲染清理`
-- `/公式清理`
-
-## LLM 主动调用逻辑
-
-插件会通过 `on_llm_request` 给当前会话注入提示，让模型知道自己有这些工具：
-
-- `render_latex_formula`
-- `render_math_solution_card`
-
-当模型判断用户在问数学题、要求步骤推导、需要更适合截图/转发的答案时，就可以主动调用出图工具。
-
-识图时还可以额外提醒模型：
-
-- 如果图片里是数学题，优先出数学图卡
-- 如果图片里是几何题，必要时附带几何示意图
-- 不要默认因为有 Python 就只走“代码式回复”
-
-这些提示现在都做成了配置项，可以自己调 prompt。
-
-## 几何图功能
-
-插件新增了几何场景 JSON 渲染能力，适用于：
-
-- 三角形
-- 圆、半圆、弧
-- 辅助线
-- 角标
-- 点位关系图
-- 简单解析几何示意图
-
-几何图渲染链路：
-
-1. LLM 在解题时判断“这题是否需要图”
-2. 若需要，则在结构化结果里给出 `geometry_scene`
-3. 插件用 `SymPy.geometry` 处理几何对象/派生点
-4. 用 `Matplotlib` 生成 PNG
-5. 最终把几何图嵌进同一张解答卡片
-
-补充说明：
-
-- 如果场景 JSON 没有任何可见图元，插件会自动跳过几何图区块，不再塞入一张大白图
-- 如果几何图因为 `viewport` 设坏而看起来像空白图，插件会先去掉 `viewport` 自动重试一次
-- LLM 现在可以额外返回 `geometry_position`，把几何图放在内容前、题目后、公式后、解答后、步骤后、最终答案后或整卡片末尾
-
-### 支持的几何场景元素
-
-- `points`
-- `segments`
-- `lines`
-- `rays`
-- `circles`
-- `polygons`
-- `angle_marks`
-- `annotations`
-
-支持的常用派生点：
-
-- `midpoint`
-- `perpendicular_foot`
-- `line_intersection`
-- `circle_line_intersection`
-- `circle_circle_intersection`
-
-### 场景 JSON 示例
-
-```json
-{
-  "caption": "按题意绘制的几何关系图",
-  "points": [
-    { "name": "A", "x": 0, "y": 0 },
-    { "name": "B", "x": 6, "y": 0 },
-    { "name": "C", "x": 2, "y": 3 },
-    { "name": "M", "type": "midpoint", "points": ["A", "B"] }
-  ],
-  "segments": [
-    { "from": "A", "to": "B", "style": "primary" },
-    { "from": "B", "to": "C", "style": "primary" },
-    { "from": "C", "to": "A", "style": "primary" },
-    { "from": "C", "to": "M", "style": "auxiliary" }
-  ],
-  "angle_marks": [
-    { "vertex": "A", "from": "B", "to": "C", "label": "α", "style": "highlight" }
-  ],
-  "annotations": [
-    { "text": "CM is median", "at": "M", "offset": [0.1, 0.2] }
-  ]
-}
-```
-
-兼容说明：
-
-- `points` 推荐使用数组写法；如果 LLM 输出紧凑对象映射，例如 `"points": {"A": [0, 0], "B": {"x": 6, "y": 0}}`，插件也会自动归一化并继续出图。
-- `angle_marks[].size` 会兼容为 `radius`，`annotations[].position` / `pos` 会兼容为坐标标注，避免常见模型写法导致几何区被跳过。
-
-说明：
-
-- 坐标可以是示意图坐标，不要求严格按比例
-- 重点是关系正确、图形清晰
-- 如果题目不需要图，LLM 不必强行生成 `geometry_scene`
-
-## Markdown 渲染
-
-插件现在支持把 Markdown 内容直接渲染进图卡，并和 MathJax 混排。
-
-适合：
-
-- 长证明题
-- 讲义式排版
-- 图文混合讲解
-- 标题 / 列表 / 引用 / 表格 / 强调
-
-当你希望 LLM 自由排版，而不是锁死在“题目 / 关键公式 / 解答 / 最终答案”四段式结构时，可以让它把主要内容写进 `markdown_content`，并把 `layout_mode` 设为 `free`。
-
-## 自然预回复
-
-为了避免触发出图后“只看到冷冰冰发图”，插件支持在真正出图前先发送一条自然回复。
-
-支持两种触发场景：
-
-- 手动命令触发前
-- LLM 主动调用工具前
-
-默认会尽量走当前 AstrBot 会话的人设；如果失败，再回退到静态文案。
-
-这部分 prompt 也已经全部可配置。
-
-## 临时文件与目录
-
-默认优先保存到：
-
-```text
-AstrBot/data/plugins/astrbot_plugin_math_render/temp
-```
-
-如果当前环境无法解析 AstrBot 数据目录，则回退到插件目录下的：
-
-```text
-.tmp/
-```
-
-你可以通过配置控制：
-
-- 保留时长
-- 启动时清理
-- 每次渲染前清理
-
-## 重要配置项
-
-### 基础开关
-
-- `auto_render_enabled`
-- `auto_render_prompt_enabled`
-- `image_math_tool_prompt_enabled`
-- `debug_logging_enabled`
-
-### 自然预回复
-
-- `send_pre_reply_before_manual_render`
-- `send_pre_reply_before_tool_render`
-- `pre_reply_use_llm`
-- `pre_reply_system_prompt`
-- `pre_reply_user_prompt`
-- `pre_reply_fallback_text_formula`
-- `pre_reply_fallback_text_solution`
-
-### 自由布局 / Markdown
-
-- `llm_render_layout_prompt_enabled`
-- `llm_render_layout_prompt`
-- `llm_render_layout_mode`
-- `formula_tool_supports_markdown_content`
-- `normalize_escaped_newlines_enabled`
-- `auto_wrap_bare_latex_enabled`
-
-### 几何图
-
-- `geometry_render_enabled`
-- `geometry_tool_prompt_enabled`
-- `geometry_tool_awareness_prompt`
-- `image_geometry_auto_render_prompt_enabled`
-- `image_geometry_auto_render_prompt`
-- `geometry_solver_prompt_enabled`
-- `geometry_solver_prompt`
-- `geometry_section_enabled`
-- `geometry_position_mode`
-- `geometry_section_position`
-- `geometry_skip_blank_scene_enabled`
-- `geometry_skip_blank_image_enabled`
-- `geometry_retry_without_viewport_on_blank`
-- `geometry_section_label`
-- `geometry_caption_enabled`
-- `geometry_section_default_caption`
-- `geometry_keywords`
-
-### 几何图样式
-
-- `geometry_figure_width_in`
-- `geometry_figure_height_in`
-- `geometry_dpi`
-- `geometry_padding_ratio`
-- `geometry_line_width`
-- `geometry_point_size`
-- `geometry_label_font_size`
-- `geometry_annotation_font_size`
-- `geometry_font_family`
-- `geometry_background_color`
-- `geometry_transparent_background`
-- `geometry_primary_color`
-- `geometry_auxiliary_color`
-- `geometry_highlight_color`
-- `geometry_subtle_color`
-- `geometry_fill_color`
-- `geometry_fill_alpha`
-- `geometry_point_color`
-- `geometry_text_color`
-- `geometry_circle_color`
-- `geometry_angle_color`
-
-若 Linux 服务器里的几何中文标注显示成方框或问号，建议安装 `Noto Sans CJK SC` / `WenQuanYi Zen Hei`，并把 `geometry_font_family` 配成服务器上实际存在的字体名。
-
-### 图卡样式
-
-- `default_style`
-- `default_accent_color`
-- `render_timeout_ms`
-- `render_wait_until`
-- `device_scale_factor`
-- `render_dpi_scale`
-- `title_font_size_px`
-- `subtitle_font_size_px`
-- `body_font_size_px`
-- `body_line_height`
-- `formula_font_scale`
-- `render_text_color`
-- `render_muted_text_color`
-- `render_page_background_css`
-- `render_card_background_css`
-- `content_max_width_px`
-
-如果本地浏览器截图偶尔卡在等待阶段，可以把 `render_wait_until` 从默认的 `networkidle` 调成 `load`；插件本地后端也会在超时时自动尝试更宽松的等待策略。
-
-## 依赖
-
-```text
-playwright>=1.50.0
-sympy>=1.13
-markdown>=3.6
-matplotlib>=3.8
-```
-
-说明：
-
-- `playwright`：本地浏览器截图渲染
-- `sympy`：表达式转 LaTeX、几何对象辅助计算
-- `markdown`：Markdown 转 HTML
-- `matplotlib`：几何图绘制
-
-## 兼容性
-
-- AstrBot `>=4.16,<5`
-- 已针对 Linux 路径与 root 场景浏览器截图做兼容
-
-## 打包上传
-
-仓库根目录提供了打包脚本：
-
-```text
-build_math_render_upload_zip.py
-```
-
-运行后会生成：
-
-```text
-astrbot_plugin_math_render_upload_时间戳.zip
-```
-
-这个 zip 会直接以插件文件作为根，不会多套一层目录，适合 AstrBot WebUI 上传安装。
-
-## 调试建议
-
-如果你遇到下面这些问题，优先打开 `debug_logging_enabled`：
-
-- 没触发工具
-- 触发了但没出图
-- 识图数学题没走本插件
-- 几何题没有附带几何图
-- 明明有 LaTeX 却没有正确渲染
-
-日志里可以看到：
-
-- 是否注入了自动渲染提示
-- 识图时是否注入了几何提示
-- 公式转 LaTeX 走的是本地还是 LLM
-- 使用的是本地浏览器还是远端 `html_render`
-- 几何场景是否成功解析 / 成功出图
-
-## 函数绘图能力
-
-`v0.4.0` 起，插件吸收了 `astrbot_plugin_math_plotter` 中最适合并入 Math Render 的核心绘图能力，并统一使用本插件的临时目录、缓存和配置体系。
-
-### 手动命令
+### 函数绘图
 
 ```text
 /plot <表达式>
@@ -401,18 +70,26 @@ astrbot_plugin_math_render_upload_时间戳.zip
 示例：
 
 ```text
-/plot sin(x)
 /plot sin(x), cos(x)
 /plot x^2 + y^2 = 1
 /plot3d sin(sqrt(x^2+y^2))
 /polar sin(3*theta)
 /parametric cos(t), sin(t)
 /vector2d -y, x
-/parametric3d cos(t), sin(t), t/5
 ```
 
-### LLM 可主动调用的绘图工具
+### 清理临时文件
 
+```text
+/mathimgcleanup
+```
+
+## LLM 主动调用
+
+插件会向当前会话注入能力提示，让模型知道可以使用这些工具：
+
+- `render_latex_formula`
+- `render_math_solution_card`
 - `plot_function`
 - `plot_multiple`
 - `plot_implicit`
@@ -422,38 +99,66 @@ astrbot_plugin_math_render_upload_时间戳.zip
 - `plot_3d_parametric`
 - `plot_vector_field_2d`
 
-当用户明确要求画函数图像、对比曲线、绘制隐式方程、极坐标图、参数曲线、三维曲面或二维向量场时，插件会向 LLM 注入绘图工具提示。普通公式排版和解题图卡仍然优先走 `render_latex_formula` / `render_math_solution_card`。
+推荐效果是：用户正常问数学题时，bot 直接调用 `render_math_solution_card`，把文字解答、公式、几何图或函数图像合并成一张图卡，而不是先发一堆散图。
 
-### 绘图配置
+## 几何图能力
 
-新增可调配置包括：
+几何图通过 `geometry_scene_json` 描述，插件会自动绘制点、线段、圆、辅助线、角标和注释。
 
-- `plot_tool_prompt_enabled`
-- `plot_keywords`
-- `plot_dpi`
-- `plot_default_x_range`
-- `plot_default_implicit_range`
-- `plot_default_3d_range`
-- `plot_default_theta_range`
-- `plot_default_t_range`
-- `plot_default_3d_t_range`
-- `plot_sample_points`
-- `plot_implicit_grid_density`
-- `plot_3d_grid_density`
-- `plot_vector_field_density`
-- `plot_line_width`
-- `plot_grid_alpha`
-- `plot_3d_cmap`
-- `plot_3d_alpha`
-- `plot_3d_elev`
-- `plot_3d_azim`
-- `plot_font_family`
+支持元素：
+
+- `points`
+- `segments`
+- `lines`
+- `rays`
+- `circles`
+- `polygons`
+- `angle_marks`
+- `annotations`
+
+支持常用派生点：
+
+- `midpoint`
+- `perpendicular_foot`
+- `line_intersection`
+- `circle_line_intersection`
+- `circle_circle_intersection`
+
+简单示例：
+
+```json
+{
+  "caption": "三角形中线示意图",
+  "points": [
+    { "name": "A", "x": 0, "y": 0 },
+    { "name": "B", "x": 6, "y": 0 },
+    { "name": "C", "x": 2, "y": 3 },
+    { "name": "M", "type": "midpoint", "points": ["A", "B"] }
+  ],
+  "segments": [
+    { "from": "A", "to": "B" },
+    { "from": "B", "to": "C" },
+    { "from": "C", "to": "A" },
+    { "from": "C", "to": "M", "style": "auxiliary" }
+  ],
+  "annotations": [
+    { "text": "M 为 AB 中点", "at": "M", "offset": [0.1, 0.2] }
+  ]
+}
+```
+
+兼容说明：
+
+- `points` 推荐数组写法，也兼容 `"points": {"A": [0, 0]}` 这种紧凑写法。
+- `angle_marks[].size` 会自动兼容为 `radius`。
+- `annotations[].position` / `pos` 会自动兼容为坐标标注。
+- 空几何场景会被跳过；疑似被错误 `viewport` 裁空时会自动重试。
 
 ## 解题图卡内嵌绘图
 
-当题目需要函数图像、曲线、隐式方程、极坐标、参数曲线、三维曲面或向量场辅助理解时，插件现在可以把绘图结果融合进同一张 `render_math_solution_card` 解题图卡里，而不是额外发送一张孤立的绘图图片。
+当题目需要函数图像或曲线辅助理解时，推荐让 LLM 一次性调用 `render_math_solution_card`，并传入 `plot_spec_json`。
 
-LLM 主动调用时推荐使用 `plot_spec_json`：
+示例：
 
 ```json
 {
@@ -466,36 +171,121 @@ LLM 主动调用时推荐使用 `plot_spec_json`：
 }
 ```
 
-支持的 `plot_spec_json.kind`：
+`plot_spec_json.kind` 支持：
 
-- `function`：一元函数 `y=f(x)`
-- `multiple`：多函数对比
-- `implicit`：隐式曲线或方程
-- `polar`：极坐标曲线
-- `parametric`：二维参数曲线
-- `surface`：三维曲面 `z=f(x,y)`
-- `parametric3d`：三维参数曲线
-- `vector_field_2d`：二维向量场
+- `function`
+- `multiple`
+- `implicit`
+- `polar`
+- `parametric`
+- `surface`
+- `parametric3d`
+- `vector_field_2d`
 
-`/mathsolveimg` 的手动解题流程也会收到绘图 schema 提示：如果模型判断题目确实需要图像，会返回 `plot_spec`，插件会先渲染该图，再嵌入最终解题卡。若绘图失败，插件会写入异常日志并继续生成没有绘图区域的解题卡，避免用户拿不到答案。
+## 配置模块
 
-相关配置：
+`_conf_schema.json` 已按模块整理，WebUI 中会比旧版更容易扫：
 
-- `plot_in_solution_card_enabled`
-- `plot_solution_card_prompt`
-- `plot_solver_prompt`
-- `plot_section_label`
-- `plot_section_position`
-- `plot_caption_enabled`
-- `plot_auto_caption_enabled`
+- `基础开关`：总开关、关键词、调试日志。
+- `LLM 提示与识图策略`：自动工具提示、识图提示、自由布局、公式修复。
+- `自然预回复`：出图前先回一句“正在处理”的文案与策略。
+- `渲染引擎与临时文件`：浏览器后端、缓存、清理、超时、视口、MathJax。
+- `图片发送`：发送组件类型，以及发送前压缩参数。
+- `图卡样式`：主题、颜色、字号、圆角、间距。
+- `几何图功能`：几何图开关、位置、提示词、空图跳过。
+- `几何图样式`：几何图尺寸、DPI、字体、线条和颜色。
+- `函数绘图`：绘图工具提示、默认范围、采样密度、三维视角和图卡嵌入。
+
+旧版扁平配置 key 会作为隐藏兼容项保留，升级后不会因为分组而直接丢掉旧自定义值。
+
+## 那两个图片压缩配置还要不要留
+
+建议保留，但放在 `图片发送` 模块里当高级项：
+
+- `send_image_max_bytes`：超过这个大小时先压缩再发送。
+- `send_image_max_side`：超过这个边长时先等比缩小。
+
+原因是 QQ/OneBot 的图片消息有时会静默失败，尤其是大图、超高图或 adapter 对图片组件处理不稳定时。这两项平时不用动，但出问题时很有用。
 
 ## 图片发送排障
 
-如果日志显示图卡已经渲染完成，但 QQ/OneBot 端没有看到图片，通常是平台适配器不接受当前图片组件类型，或生成图超过平台限制。插件会在发送前自动检查并压缩图片，并默认使用 AstrBot 本地文件图片组件发送；这和 `send_message_to_user` 里传 `path` 的图片发送方式一致。开启 `debug_logging_enabled` 后可以在日志里看到发送前的图片路径、字节数、分辨率、压缩结果和发送组件类型。
+如果日志显示已经生成 PNG，但聊天里没看到图片，优先打开：
 
-相关配置：
+```text
+debug_logging_enabled = true
+```
 
-- `send_image_transport`：默认 `file`；如平台明确支持 base64 图片组件，可改为 `base64`
-- `send_image_max_bytes`
-- `send_image_max_side`
-- `send_image_jpeg_quality`
+重点看日志：
+
+- `render_to_png ... target=...`：说明图卡是否真的生成。
+- `image send inspect ... bytes=... width=... height=...`：说明发送前图片大小。
+- `image send payload prepared transport=file ...`：说明当前走本地文件图片组件。
+- `image send payload prepared transport=base64 ...`：说明当前走 base64 图片组件。
+
+默认发送方式是：
+
+```text
+send_image_transport = file
+```
+
+这和 `send_message_to_user` 里传 `path` 的图片发送方式一致。只有在平台明确支持 base64 图片组件时，才建议改成 `base64`。
+
+## 临时文件
+
+默认保存到：
+
+```text
+AstrBot/data/plugins/astrbot_plugin_math_render/temp
+```
+
+如果无法解析 AstrBot 数据目录，会回退到插件目录下的：
+
+```text
+.tmp/
+```
+
+相关配置在 `渲染引擎与临时文件` 模块里。
+
+## 依赖
+
+```text
+playwright>=1.50.0
+sympy>=1.13
+markdown>=3.6
+matplotlib>=3.8
+```
+
+说明：
+
+- `playwright`：本地浏览器截图。
+- `sympy`：表达式转 LaTeX、几何派生点计算。
+- `markdown`：Markdown 转 HTML。
+- `matplotlib`：几何图和函数图像绘制。
+
+## 兼容性
+
+- AstrBot：`>=4.16,<5`
+- 已针对 Linux root 场景关闭浏览器沙箱做兼容。
+- 几何文字如果在 Linux 显示为方框，建议安装 `Noto Sans CJK SC` 或 `WenQuanYi Zen Hei`，并配置 `geometry_font_family`。
+
+## 打包上传
+
+仓库提供打包脚本：
+
+```text
+build_math_render_upload_zip.py
+```
+
+生成的 zip 会以插件文件作为根目录，适合直接在 AstrBot WebUI 上传安装。
+
+## 调试建议
+
+遇到这些问题时，先打开 `debug_logging_enabled`：
+
+- bot 没触发工具。
+- 工具触发了但没出图。
+- 几何题没有附带几何图。
+- 绘图失败但解题卡仍然发出。
+- 图片路径存在，但聊天里看不到图。
+
+日志通常能看到：提示是否注入、几何场景是否解析、绘图是否成功、渲染后端、输出路径、图片大小和发送组件类型。

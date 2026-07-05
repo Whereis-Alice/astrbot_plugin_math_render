@@ -15,6 +15,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import sympy as sp
 from matplotlib import font_manager
+from matplotlib.colors import Normalize
+from mpl_toolkits.mplot3d.art3d import Line3DCollection
 from sympy import SympifyError, lambdify, latex, symbols, sympify
 
 try:
@@ -350,12 +352,16 @@ class MathPlotService:
         y_vals = self._evaluate_1d(expr_y, t_vals, variable=t)
         z_vals = self._evaluate_1d(expr_z, t_vals, variable=t)
         mask = np.isfinite(x_vals) & np.isfinite(y_vals) & np.isfinite(z_vals)
+        t_vals = t_vals[mask]
         x_vals, y_vals, z_vals = x_vals[mask], y_vals[mask], z_vals[mask]
-        if len(x_vals) == 0:
+        if len(x_vals) < 2:
             raise ValueError("3D parametric curve has no finite points in the requested range.")
 
+        cmap_name = self._text("plot_3d_parametric_cmap", "plasma") or "plasma"
+        line_width = self._float("plot_line_width", 2.0)
         render_key = self._cache_key(
             "plot_parametric_3d",
+            "gradient_t_v1",
             x_expression,
             y_expression,
             z_expression,
@@ -364,6 +370,8 @@ class MathPlotService:
             xlabel,
             ylabel,
             zlabel,
+            cmap_name,
+            line_width,
         )
         target_path = self.temp_dir / f"plot_parametric_3d_{render_key}.png"
         if self._cached(target_path):
@@ -371,7 +379,22 @@ class MathPlotService:
 
         fig = plt.figure(figsize=(11, 8), dpi=self._int("plot_dpi", 140), facecolor="white", constrained_layout=True)
         ax = fig.add_subplot(111, projection="3d")
-        ax.plot(x_vals, y_vals, z_vals, linewidth=self._float("plot_line_width", 2.0), color="#2563EB")
+        points = np.column_stack((x_vals, y_vals, z_vals)).reshape(-1, 1, 3)
+        segments = np.concatenate((points[:-1], points[1:]), axis=1)
+        t_midpoints = (t_vals[:-1] + t_vals[1:]) / 2.0
+        norm = Normalize(vmin=float(np.min(t_vals)), vmax=float(np.max(t_vals)))
+        curve = Line3DCollection(
+            segments,
+            cmap=cmap_name,
+            norm=norm,
+            linewidths=line_width,
+            antialiased=True,
+        )
+        curve.set_array(t_midpoints)
+        ax.add_collection3d(curve)
+        self._set_3d_data_limits(ax, x_vals, y_vals, z_vals)
+        colorbar = fig.colorbar(curve, ax=ax, shrink=0.62, aspect=16, pad=0.08)
+        colorbar.set_label("t")
         self._style_3d_axes(ax, xlabel or "x", ylabel or "y", zlabel or "z")
         ax.set_title(
             title or f"$(x,y,z)=({latex(expr_x)}, {latex(expr_y)}, {latex(expr_z)})$",
@@ -585,6 +608,29 @@ class MathPlotService:
         ax.set_ylabel(ylabel, fontsize=10)
         ax.set_zlabel(zlabel, fontsize=10)
         ax.grid(True, alpha=self._float("plot_grid_alpha", 0.28), linestyle="--")
+
+    def _set_3d_data_limits(
+        self,
+        ax: Any,
+        x_values: np.ndarray,
+        y_values: np.ndarray,
+        z_values: np.ndarray,
+    ) -> None:
+        for setter, values in (
+            (ax.set_xlim, x_values),
+            (ax.set_ylim, y_values),
+            (ax.set_zlim, z_values),
+        ):
+            finite_values = values[np.isfinite(values)]
+            if len(finite_values) == 0:
+                continue
+            lower = float(np.min(finite_values))
+            upper = float(np.max(finite_values))
+            if math.isclose(lower, upper):
+                padding = max(abs(lower) * 0.05, 1.0)
+            else:
+                padding = (upper - lower) * 0.06
+            setter(lower - padding, upper + padding)
 
     def _save_and_close(self, fig: Any, target_path: Path, *, tight: bool = True) -> None:
         target_path.parent.mkdir(parents=True, exist_ok=True)

@@ -16,6 +16,7 @@ import numpy as np
 import sympy as sp
 from matplotlib import font_manager
 from matplotlib.colors import Normalize
+from matplotlib.patches import Patch
 from mpl_toolkits.mplot3d.art3d import Line3DCollection
 from sympy import SympifyError, lambdify, latex, symbols, sympify
 
@@ -404,6 +405,274 @@ class MathPlotService:
         self._save_and_close(fig, target_path)
         return PlotResult(target_path, "已绘制三维参数曲线。")
 
+    def plot_spherical_3d(
+        self,
+        expression: str,
+        *,
+        theta_range: str = "",
+        phi_range: str = "",
+        title: str = "",
+        xlabel: str = "",
+        ylabel: str = "",
+        zlabel: str = "",
+    ) -> PlotResult:
+        theta = symbols("theta")
+        phi = symbols("phi")
+        expr = self._parse_expr(expression, variables=("theta", "phi"))
+        theta_min, theta_max = self._parse_range(
+            theta_range,
+            self._text("plot_default_spherical_theta_range", "0,pi"),
+        )
+        phi_min, phi_max = self._parse_range(
+            phi_range,
+            self._text("plot_default_spherical_phi_range", "0,2*pi"),
+        )
+        density = max(24, self._int("plot_3d_grid_density", 160))
+        theta_vals = np.linspace(theta_min, theta_max, density)
+        phi_vals = np.linspace(phi_min, phi_max, density * 2)
+        theta_grid, phi_grid = np.meshgrid(theta_vals, phi_vals)
+        func = lambdify((theta, phi), expr, "numpy")
+        radius = self._as_grid(func(theta_grid, phi_grid), theta_grid.shape)
+        radius[~np.isfinite(radius)] = np.nan
+        if np.all(np.isnan(radius)):
+            raise ValueError("Spherical expression has no finite values in the requested range.")
+
+        x_grid = radius * np.sin(theta_grid) * np.cos(phi_grid)
+        y_grid = radius * np.sin(theta_grid) * np.sin(phi_grid)
+        z_grid = radius * np.cos(theta_grid)
+
+        render_key = self._cache_key(
+            "plot_spherical_3d",
+            expression,
+            theta_range,
+            phi_range,
+            title,
+            xlabel,
+            ylabel,
+            zlabel,
+        )
+        target_path = self.temp_dir / f"plot_spherical_3d_{render_key}.png"
+        if self._cached(target_path):
+            return PlotResult(target_path, f"已绘制球坐标曲面 r = {latex(expr)}。")
+
+        fig = plt.figure(figsize=(11, 8), dpi=self._int("plot_dpi", 140), facecolor="white", constrained_layout=True)
+        ax = fig.add_subplot(111, projection="3d")
+        surface = ax.plot_surface(
+            x_grid,
+            y_grid,
+            z_grid,
+            facecolors=plt.get_cmap(self._text("plot_3d_cmap", "viridis"))(
+                Normalize(vmin=float(np.nanmin(radius)), vmax=float(np.nanmax(radius)))(radius)
+            ),
+            alpha=self._float("plot_3d_alpha", 0.88),
+            linewidth=0,
+            antialiased=True,
+        )
+        mappable = plt.cm.ScalarMappable(
+            norm=Normalize(vmin=float(np.nanmin(radius)), vmax=float(np.nanmax(radius))),
+            cmap=self._text("plot_3d_cmap", "viridis"),
+        )
+        mappable.set_array(radius[np.isfinite(radius)])
+        fig.colorbar(mappable, ax=ax, shrink=0.58, aspect=14, label="r")
+        self._set_3d_data_limits(ax, x_grid.ravel(), y_grid.ravel(), z_grid.ravel())
+        self._style_3d_axes(ax, xlabel or "x", ylabel or "y", zlabel or "z")
+        ax.set_title(title or f"$r = {latex(expr)}$", fontsize=14)
+        ax.view_init(elev=self._float("plot_3d_elev", 25), azim=self._float("plot_3d_azim", -60))
+        self._save_and_close(fig, target_path)
+        return PlotResult(target_path, f"已绘制球坐标曲面 r = {latex(expr)}。")
+
+    def plot_multiple_surfaces(
+        self,
+        expressions: str,
+        *,
+        x_range: str = "",
+        y_range: str = "",
+        title: str = "",
+        xlabel: str = "",
+        ylabel: str = "",
+        zlabel: str = "",
+    ) -> PlotResult:
+        expr_texts = self.split_expressions(expressions)
+        if len(expr_texts) < 2:
+            raise ValueError("Please provide at least two comma-separated 3D surface expressions.")
+        max_count = self._int("plot_3d_max_surfaces", 5)
+        if len(expr_texts) > max_count:
+            raise ValueError(f"At most {max_count} 3D surfaces can be plotted together.")
+
+        parsed = [self._parse_expr(item, variables=("x", "y")) for item in expr_texts]
+        x_min, x_max = self._parse_range(x_range, self._text("plot_default_3d_range", "-5,5"))
+        y_min, y_max = self._parse_range(y_range, f"{x_min},{x_max}")
+        density = self._int("plot_3d_grid_density", 160)
+        xs = np.linspace(x_min, x_max, density)
+        ys = np.linspace(y_min, y_max, density)
+        x_grid, y_grid = np.meshgrid(xs, ys)
+
+        render_key = self._cache_key("plot_multiple_surfaces", expressions, x_range, y_range, title, xlabel, ylabel, zlabel)
+        target_path = self.temp_dir / f"plot_multiple_surfaces_{render_key}.png"
+        if self._cached(target_path):
+            return PlotResult(target_path, f"已绘制 {len(parsed)} 个三维曲面对比。")
+
+        fig = plt.figure(figsize=(11, 8), dpi=self._int("plot_dpi", 140), facecolor="white", constrained_layout=True)
+        ax = fig.add_subplot(111, projection="3d")
+        colors = self._plot_colors()
+        proxies: list[Patch] = []
+        plotted = 0
+        z_values: list[np.ndarray] = []
+        for index, expr in enumerate(parsed):
+            func = lambdify((symbols("x"), symbols("y")), expr, "numpy")
+            z_grid = self._as_grid(func(x_grid, y_grid), x_grid.shape)
+            z_grid[~np.isfinite(z_grid)] = np.nan
+            if np.all(np.isnan(z_grid)):
+                continue
+            color = colors[index % len(colors)]
+            ax.plot_surface(
+                x_grid,
+                y_grid,
+                z_grid,
+                color=color,
+                alpha=0.76 if index == 0 else 0.54,
+                linewidth=0,
+                antialiased=True,
+            )
+            proxies.append(Patch(facecolor=color, label=f"$z={latex(expr)}$"))
+            z_values.append(z_grid.ravel())
+            plotted += 1
+        if plotted == 0:
+            plt.close(fig)
+            raise ValueError("No 3D surface expression produced finite values in the requested range.")
+
+        if z_values:
+            self._set_3d_data_limits(ax, x_grid.ravel(), y_grid.ravel(), np.concatenate(z_values))
+        self._style_3d_axes(ax, xlabel or "x", ylabel or "y", zlabel or "z")
+        ax.legend(handles=proxies, fontsize=9, loc="upper left")
+        ax.set_title(title or "3D surface comparison", fontsize=14)
+        ax.view_init(elev=self._float("plot_3d_elev", 25), azim=self._float("plot_3d_azim", -60))
+        self._save_and_close(fig, target_path)
+        return PlotResult(target_path, f"已绘制 {plotted} 个三维曲面对比。")
+
+    def plot_implicit_3d(
+        self,
+        equation: str,
+        *,
+        x_range: str = "",
+        y_range: str = "",
+        z_range: str = "",
+        title: str = "",
+        xlabel: str = "",
+        ylabel: str = "",
+        zlabel: str = "",
+    ) -> PlotResult:
+        expr = self._parse_equation_as_zero(equation, variables=("x", "y", "z"))
+        x_min, x_max = self._parse_range(x_range, self._text("plot_default_implicit_3d_range", "-3,3"))
+        y_min, y_max = self._parse_range(y_range, f"{x_min},{x_max}")
+        z_min, z_max = self._parse_range(z_range, f"{x_min},{x_max}")
+        density = self._int("plot_implicit_3d_grid_density", 96)
+        slices = self._int("plot_implicit_3d_slices", 48)
+        xs = np.linspace(x_min, x_max, density)
+        ys = np.linspace(y_min, y_max, density)
+        zs = np.linspace(z_min, z_max, max(8, slices))
+        x_grid, y_grid = np.meshgrid(xs, ys)
+        func = lambdify((symbols("x"), symbols("y"), symbols("z")), expr, "numpy")
+
+        render_key = self._cache_key("plot_implicit_3d", "z_slices_v1", equation, x_range, y_range, z_range, title, xlabel, ylabel, zlabel)
+        target_path = self.temp_dir / f"plot_implicit_3d_{render_key}.png"
+        if self._cached(target_path):
+            return PlotResult(target_path, f"已绘制隐式三维曲面 {latex(expr)} = 0。")
+
+        fig = plt.figure(figsize=(11, 8), dpi=self._int("plot_dpi", 140), facecolor="white", constrained_layout=True)
+        ax = fig.add_subplot(111, projection="3d")
+        contour_count = 0
+        for z_value in zs:
+            z_grid = np.full_like(x_grid, z_value)
+            values = self._as_grid(func(x_grid, y_grid, z_grid), x_grid.shape)
+            values[~np.isfinite(values)] = np.nan
+            if np.all(np.isnan(values)):
+                continue
+            value_min = float(np.nanmin(values))
+            value_max = float(np.nanmax(values))
+            if value_min > 0 or value_max < 0:
+                continue
+            ax.contour(
+                x_grid,
+                y_grid,
+                values,
+                levels=[0],
+                zdir="z",
+                offset=float(z_value),
+                colors=self._text("plot_primary_color", "#2563EB"),
+                linewidths=max(0.4, self._float("plot_line_width", 2.0) * 0.45),
+                alpha=0.58,
+            )
+            contour_count += 1
+        if contour_count == 0:
+            plt.close(fig)
+            raise ValueError("Implicit 3D equation has no zero-level slices in the requested range.")
+
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
+        ax.set_zlim(z_min, z_max)
+        self._style_3d_axes(ax, xlabel or "x", ylabel or "y", zlabel or "z")
+        ax.set_title(title or f"${latex(expr)} = 0$", fontsize=14)
+        ax.view_init(elev=self._float("plot_3d_elev", 25), azim=self._float("plot_3d_azim", -60))
+        self._save_and_close(fig, target_path)
+        return PlotResult(target_path, f"已绘制隐式三维曲面 {latex(expr)} = 0。")
+
+    def plot_vectors_3d(
+        self,
+        vectors: str,
+        *,
+        title: str = "",
+        xlabel: str = "",
+        ylabel: str = "",
+        zlabel: str = "",
+    ) -> PlotResult:
+        vector_defs = [item.strip() for item in re.split(r"[;；\n]+", vectors or "") if item.strip()]
+        if not vector_defs:
+            raise ValueError("Please provide at least one 3D vector definition.")
+        parsed = [self._parse_vector_3d(item) for item in vector_defs]
+
+        render_key = self._cache_key("plot_vectors_3d", vectors, title, xlabel, ylabel, zlabel)
+        target_path = self.temp_dir / f"plot_vectors_3d_{render_key}.png"
+        if self._cached(target_path):
+            return PlotResult(target_path, f"已绘制 {len(parsed)} 个三维向量。")
+
+        fig = plt.figure(figsize=(11, 8), dpi=self._int("plot_dpi", 140), facecolor="white", constrained_layout=True)
+        ax = fig.add_subplot(111, projection="3d")
+        all_x: list[float] = []
+        all_y: list[float] = []
+        all_z: list[float] = []
+        for index, item in enumerate(parsed, start=1):
+            sx, sy, sz = item["start"]
+            ex, ey, ez = item["end"]
+            dx, dy, dz = ex - sx, ey - sy, ez - sz
+            label = item["label"] or f"v{index}"
+            color = item["color"]
+            ax.quiver(
+                sx,
+                sy,
+                sz,
+                dx,
+                dy,
+                dz,
+                color=color,
+                arrow_length_ratio=0.14,
+                linewidth=self._float("plot_line_width", 2.0),
+                label=label,
+            )
+            ax.scatter([ex], [ey], [ez], color=color, s=24, alpha=0.9)
+            ax.text(ex, ey, ez, f" {label}", color=color, fontsize=9)
+            all_x.extend([sx, ex])
+            all_y.extend([sy, ey])
+            all_z.extend([sz, ez])
+
+        self._set_3d_data_limits(ax, np.asarray(all_x), np.asarray(all_y), np.asarray(all_z))
+        self._style_3d_axes(ax, xlabel or "x", ylabel or "y", zlabel or "z")
+        ax.legend(fontsize=9, loc="upper left")
+        ax.set_title(title or "3D vectors", fontsize=14)
+        ax.view_init(elev=self._float("plot_3d_elev", 25), azim=self._float("plot_3d_azim", -60))
+        self._save_and_close(fig, target_path)
+        return PlotResult(target_path, f"已绘制 {len(parsed)} 个三维向量。")
+
     def plot_vector_field_2d(
         self,
         x_expression: str,
@@ -482,6 +751,78 @@ class MathPlotService:
         if item:
             items.append(item)
         return items
+
+    def _parse_vector_3d(self, raw: str) -> dict[str, Any]:
+        text = (raw or "").strip()
+        if not text:
+            raise ValueError("Empty vector definition.")
+
+        color = self._plot_colors()[0]
+        label = ""
+        if ":" in text:
+            parts = [part.strip() for part in text.split(":")]
+            text = parts[0]
+            for extra in parts[1:]:
+                if not extra:
+                    continue
+                color_value = self._parse_color(extra)
+                if color_value:
+                    color = color_value
+                else:
+                    label = extra
+
+        if "->" in text:
+            start_text, end_text = text.split("->", 1)
+        else:
+            start_text, end_text = "0,0,0", text
+        start = self._parse_point_3d(start_text)
+        end = self._parse_point_3d(end_text)
+        if all(math.isclose(a, b) for a, b in zip(start, end)):
+            raise ValueError(f"Zero-length 3D vector: {raw!r}.")
+        return {"start": start, "end": end, "color": color, "label": label}
+
+    def _parse_point_3d(self, raw: str) -> tuple[float, float, float]:
+        text = (raw or "").strip()
+        if text.startswith("(") and text.endswith(")"):
+            text = text[1:-1].strip()
+        parts = self.split_expressions(text)
+        if len(parts) != 3:
+            raise ValueError(f"Expected a 3D point 'x,y,z', got {raw!r}.")
+        values = [float(sp.N(self._parse_expr(part, variables=()))) for part in parts]
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError(f"Point contains non-finite coordinates: {raw!r}.")
+        return values[0], values[1], values[2]
+
+    def _parse_color(self, raw: str) -> str:
+        text = (raw or "").strip()
+        named = {
+            "红": "#F44336",
+            "red": "#F44336",
+            "蓝": "#2196F3",
+            "blue": "#2196F3",
+            "绿": "#4CAF50",
+            "green": "#4CAF50",
+            "橙": "#FF9800",
+            "orange": "#FF9800",
+            "紫": "#9C27B0",
+            "purple": "#9C27B0",
+            "灰": "#9E9E9E",
+            "gray": "#9E9E9E",
+            "黑": "#000000",
+            "black": "#000000",
+            "青": "#06B6D4",
+            "cyan": "#06B6D4",
+            "黄": "#FACC15",
+            "yellow": "#FACC15",
+        }
+        lowered = text.lower()
+        if lowered in named:
+            return named[lowered]
+        if re.match(r"^#[0-9A-Fa-f]{6}$", text):
+            return text
+        if lowered in {"magenta", "brown", "pink", "lime", "navy", "teal"}:
+            return lowered
+        return ""
 
     def status_text(self) -> str:
         files = sorted(self.temp_dir.glob("plot_*.png"))

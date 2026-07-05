@@ -39,7 +39,7 @@ SOLVER_SYSTEM_PROMPT = """你是一名专门把数学解答整理成高质量图
 8. 默认使用简体中文。"""
 
 
-PLOT_SPEC_GUIDE = """If the problem benefits from a function graph, curve, surface, polar plot, parametric plot, implicit curve, or vector field, include a `plot_spec` object in the same JSON response so the final solution card can embed the generated plot.
+PLOT_SPEC_GUIDE = """If the problem benefits from a function graph, curve, surface, polar plot, parametric plot, implicit curve/surface, or vector diagram, include a `plot_spec` object in the same JSON response so the final solution card can embed the generated plot.
 
 Supported `plot_spec` forms:
 {
@@ -77,6 +77,25 @@ Supported `plot_spec` forms:
   "y_range": "-6,6"
 }
 {
+  "kind": "multiple_surfaces",
+  "expressions": ["x^2+y^2", "sqrt(x^2+y^2)"],
+  "x_range": "-3,3",
+  "y_range": "-3,3"
+}
+{
+  "kind": "spherical",
+  "expression": "1+0.35*sin(4*theta)*cos(3*phi)",
+  "theta_range": "0,pi",
+  "phi_range": "0,2*pi"
+}
+{
+  "kind": "implicit3d",
+  "expression": "x^2+y^2+z^2=1",
+  "x_range": "-1.5,1.5",
+  "y_range": "-1.5,1.5",
+  "z_range": "-1.5,1.5"
+}
+{
   "kind": "parametric3d",
   "x_expression": "cos(t)",
   "y_expression": "sin(t)",
@@ -90,9 +109,14 @@ Supported `plot_spec` forms:
   "x_range": "-5,5",
   "y_range": "-5,5"
 }
+{
+  "kind": "vector3d",
+  "vectors": "1,2,3:red:v1; 0,0,0->3,4,1:blue:v2"
+}
 
 Optional plot fields: `xlabel`, `ylabel`, `zlabel`, `plot_caption`, and `plot_position`.
 If the source gives three equations x=..., y=..., and z=... as functions of t, use kind `parametric3d`; do not convert it into a surface kind.
+If the source gives one equation involving x, y, and z, use kind `implicit3d`. If the source is r=f(theta,phi) or 球坐标, use kind `spherical`. If the source asks to compare several z=f(x,y) surfaces, use kind `multiple_surfaces`.
 Use plot specs only when the graph materially helps the solution. Do not put prose or code in `plot_spec`; it must be plain JSON data."""
 
 

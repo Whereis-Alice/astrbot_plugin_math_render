@@ -665,7 +665,7 @@
       "plot_tool_awareness_prompt": {
         "type": "text",
         "description": "LLM 绘图工具提醒模板",
-        "default": "当用户要求绘制或比较函数图像、曲线、隐式方程、极坐标曲线、参数曲线、三维曲面或二维向量场时，你可以调用本插件的绘图工具。可用工具：plot_function、plot_multiple、plot_implicit、plot_polar、plot_parametric、plot_3d_function、plot_3d_parametric、plot_vector_field_2d。\n工具选择规则：`plot_3d_function` 只用于一个形如 z=f(x,y) 的三维曲面；如果题目或图片里是 x=...、y=...、z=... 三个关于 t 的方程，即使用户口头说“三维曲面”，也应使用 `plot_3d_parametric`。不要把用户给出的参数方程替换成无关的 z=cos(x)cos(y) 之类曲面。",
+        "default": "当用户要求绘制或比较函数图像、曲线、隐式方程、极坐标曲线、参数曲线、三维曲面、球坐标曲面、三维隐式曲面或向量图时，你可以调用本插件的绘图工具。可用工具：plot_function、plot_multiple、plot_implicit、plot_polar、plot_parametric、plot_3d_function、plot_3d_multiple、plot_3d_spherical、plot_implicit_3d、plot_3d_parametric、plot_vector_field_2d、plot_vector_3d。\n工具选择规则：`plot_3d_function` 只用于一个形如 z=f(x,y) 的三维曲面；多个 z=f(x,y) 曲面对比使用 `plot_3d_multiple`；r=f(theta,phi) 或球坐标曲面使用 `plot_3d_spherical`；单个包含 x、y、z 的方程 F(x,y,z)=0 使用 `plot_implicit_3d`；x=...、y=...、z=... 三个关于 t 的方程使用 `plot_3d_parametric`。不要把用户给出的参数方程替换成无关曲面。",
         "hint": "仅在识别到绘图意图且启用绘图工具提示时注入。"
       },
       "plot_in_solution_card_enabled": {
@@ -677,7 +677,7 @@
       "plot_solution_card_prompt": {
         "type": "text",
         "description": "解题图卡内嵌绘图提示模板",
-        "default": "render_math_solution_card 可以把生成的函数图像或曲线嵌入同一张解题图卡。遇到需要图像辅助理解的数学题时，优先一次性调用 render_math_solution_card，并传入 plot_spec_json，而不是单独先发一张绘图。plot_spec_json 支持 kind：function、multiple、implicit、polar、parametric、surface、parametric3d、vector_field_2d。若来源是 x=...、y=...、z=... 三个关于 t 的方程，请使用 kind=parametric3d，不要使用 surface。",
+        "default": "render_math_solution_card 可以把生成的函数图像或曲线嵌入同一张解题图卡。遇到需要图像辅助理解的数学题时，优先一次性调用 render_math_solution_card，并传入 plot_spec_json，而不是单独先发一张绘图。plot_spec_json 支持 kind：function、multiple、implicit、polar、parametric、surface、multiple_surfaces、spherical、implicit3d、parametric3d、vector_field_2d、vector3d。若来源是 x=...、y=...、z=... 三个关于 t 的方程，请使用 kind=parametric3d；若是单个 x/y/z 方程，请使用 kind=implicit3d；若是 r=f(theta,phi)，请使用 kind=spherical。",
         "hint": "数学题或绘图请求中注入，让模型知道如何把绘图和解答合并成同一张图卡。"
       },
       "plot_solver_prompt": {
@@ -723,7 +723,7 @@
       "plot_keywords": {
         "type": "text",
         "description": "绘图意图关键词",
-        "default": "画图\n绘图\n图像\n函数图像\n函数作图\n曲线\n曲面\n极坐标\n参数方程\n参数曲线\n向量场\nplot\ngraph\ncurve\nsurface\npolar\nparametric\nvector field\nfunction graph\nfunction plot",
+        "default": "画图\n绘图\n图像\n函数图像\n函数作图\n曲线\n曲面\n多曲面\n隐式曲面\n球坐标\n极坐标\n参数方程\n参数曲线\n向量场\n三维向量\nplot\ngraph\ncurve\nsurface\nspherical\nimplicit3d\npolar\nparametric\nvector field\nvector3d\nfunction graph\nfunction plot",
         "hint": "每行一个关键词，用于判断是否给 LLM 注入绘图工具提示。"
       },
       "plot_dpi": {
@@ -745,6 +745,21 @@
         "type": "string",
         "description": "三维曲面默认 x/y 范围",
         "default": "-5,5"
+      },
+      "plot_default_implicit_3d_range": {
+        "type": "string",
+        "description": "三维隐式曲面默认 x/y/z 范围",
+        "default": "-3,3"
+      },
+      "plot_default_spherical_theta_range": {
+        "type": "string",
+        "description": "球坐标曲面默认 theta 范围",
+        "default": "0,pi"
+      },
+      "plot_default_spherical_phi_range": {
+        "type": "string",
+        "description": "球坐标曲面默认 phi 范围",
+        "default": "0,2*pi"
       },
       "plot_default_theta_range": {
         "type": "string",
@@ -781,10 +796,25 @@
         "description": "隐式曲线网格密度",
         "default": 420
       },
+      "plot_implicit_3d_grid_density": {
+        "type": "int",
+        "description": "三维隐式曲面切片网格密度",
+        "default": 96
+      },
+      "plot_implicit_3d_slices": {
+        "type": "int",
+        "description": "三维隐式曲面 z 方向切片数",
+        "default": 48
+      },
       "plot_3d_grid_density": {
         "type": "int",
         "description": "三维曲面网格密度",
         "default": 160
+      },
+      "plot_3d_max_surfaces": {
+        "type": "int",
+        "description": "多曲面对比最大曲面数量",
+        "default": 5
       },
       "plot_vector_field_density": {
         "type": "int",
@@ -1534,7 +1564,7 @@
   "plot_tool_awareness_prompt": {
     "type": "text",
     "description": "LLM 绘图工具提醒模板",
-    "default": "当用户要求绘制或比较函数图像、曲线、隐式方程、极坐标曲线、参数曲线、三维曲面或二维向量场时，你可以调用本插件的绘图工具。可用工具：plot_function、plot_multiple、plot_implicit、plot_polar、plot_parametric、plot_3d_function、plot_3d_parametric、plot_vector_field_2d。\n工具选择规则：`plot_3d_function` 只用于一个形如 z=f(x,y) 的三维曲面；如果题目或图片里是 x=...、y=...、z=... 三个关于 t 的方程，即使用户口头说“三维曲面”，也应使用 `plot_3d_parametric`。不要把用户给出的参数方程替换成无关的 z=cos(x)cos(y) 之类曲面。",
+    "default": "当用户要求绘制或比较函数图像、曲线、隐式方程、极坐标曲线、参数曲线、三维曲面、球坐标曲面、三维隐式曲面或向量图时，你可以调用本插件的绘图工具。可用工具：plot_function、plot_multiple、plot_implicit、plot_polar、plot_parametric、plot_3d_function、plot_3d_multiple、plot_3d_spherical、plot_implicit_3d、plot_3d_parametric、plot_vector_field_2d、plot_vector_3d。\n工具选择规则：`plot_3d_function` 只用于一个形如 z=f(x,y) 的三维曲面；多个 z=f(x,y) 曲面对比使用 `plot_3d_multiple`；r=f(theta,phi) 或球坐标曲面使用 `plot_3d_spherical`；单个包含 x、y、z 的方程 F(x,y,z)=0 使用 `plot_implicit_3d`；x=...、y=...、z=... 三个关于 t 的方程使用 `plot_3d_parametric`。不要把用户给出的参数方程替换成无关曲面。",
     "hint": "仅在识别到绘图意图且启用绘图工具提示时注入。",
     "invisible": true
   },
@@ -1548,7 +1578,7 @@
   "plot_solution_card_prompt": {
     "type": "text",
     "description": "解题图卡内嵌绘图提示模板",
-    "default": "render_math_solution_card 可以把生成的函数图像或曲线嵌入同一张解题图卡。遇到需要图像辅助理解的数学题时，优先一次性调用 render_math_solution_card，并传入 plot_spec_json，而不是单独先发一张绘图。plot_spec_json 支持 kind：function、multiple、implicit、polar、parametric、surface、parametric3d、vector_field_2d。若来源是 x=...、y=...、z=... 三个关于 t 的方程，请使用 kind=parametric3d，不要使用 surface。",
+    "default": "render_math_solution_card 可以把生成的函数图像或曲线嵌入同一张解题图卡。遇到需要图像辅助理解的数学题时，优先一次性调用 render_math_solution_card，并传入 plot_spec_json，而不是单独先发一张绘图。plot_spec_json 支持 kind：function、multiple、implicit、polar、parametric、surface、multiple_surfaces、spherical、implicit3d、parametric3d、vector_field_2d、vector3d。若来源是 x=...、y=...、z=... 三个关于 t 的方程，请使用 kind=parametric3d；若是单个 x/y/z 方程，请使用 kind=implicit3d；若是 r=f(theta,phi)，请使用 kind=spherical。",
     "hint": "数学题或绘图请求中注入，让模型知道如何把绘图和解答合并成同一张图卡。",
     "invisible": true
   },
@@ -1600,7 +1630,7 @@
   "plot_keywords": {
     "type": "text",
     "description": "绘图意图关键词",
-    "default": "画图\n绘图\n图像\n函数图像\n函数作图\n曲线\n曲面\n极坐标\n参数方程\n参数曲线\n向量场\nplot\ngraph\ncurve\nsurface\npolar\nparametric\nvector field\nfunction graph\nfunction plot",
+    "default": "画图\n绘图\n图像\n函数图像\n函数作图\n曲线\n曲面\n多曲面\n隐式曲面\n球坐标\n极坐标\n参数方程\n参数曲线\n向量场\n三维向量\nplot\ngraph\ncurve\nsurface\nspherical\nimplicit3d\npolar\nparametric\nvector field\nvector3d\nfunction graph\nfunction plot",
     "hint": "每行一个关键词，用于判断是否给 LLM 注入绘图工具提示。",
     "invisible": true
   },
@@ -1626,6 +1656,24 @@
     "type": "string",
     "description": "三维曲面默认 x/y 范围",
     "default": "-5,5",
+    "invisible": true
+  },
+  "plot_default_implicit_3d_range": {
+    "type": "string",
+    "description": "三维隐式曲面默认 x/y/z 范围",
+    "default": "-3,3",
+    "invisible": true
+  },
+  "plot_default_spherical_theta_range": {
+    "type": "string",
+    "description": "球坐标曲面默认 theta 范围",
+    "default": "0,pi",
+    "invisible": true
+  },
+  "plot_default_spherical_phi_range": {
+    "type": "string",
+    "description": "球坐标曲面默认 phi 范围",
+    "default": "0,2*pi",
     "invisible": true
   },
   "plot_default_theta_range": {
@@ -1670,10 +1718,28 @@
     "default": 420,
     "invisible": true
   },
+  "plot_implicit_3d_grid_density": {
+    "type": "int",
+    "description": "三维隐式曲面切片网格密度",
+    "default": 96,
+    "invisible": true
+  },
+  "plot_implicit_3d_slices": {
+    "type": "int",
+    "description": "三维隐式曲面 z 方向切片数",
+    "default": 48,
+    "invisible": true
+  },
   "plot_3d_grid_density": {
     "type": "int",
     "description": "三维曲面网格密度",
     "default": 160,
+    "invisible": true
+  },
+  "plot_3d_max_surfaces": {
+    "type": "int",
+    "description": "多曲面对比最大曲面数量",
+    "default": 5,
     "invisible": true
   },
   "plot_vector_field_density": {

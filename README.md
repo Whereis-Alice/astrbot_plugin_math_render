@@ -57,27 +57,30 @@
 
 ### 函数绘图
 
+常用变量写法：二维函数使用 `x` / `y`，极坐标使用 `theta`，参数曲线使用 `t`，球坐标曲面使用 `theta` 和 `phi`，三维隐式曲面使用 `x`、`y`、`z`。表达式支持 `sin`、`cos`、`tan`、`sqrt`、`exp`、`log`、`abs`、`pi` 等常见函数和常量。
+
+| 命令 | 用途 | 示例 |
+| --- | --- | --- |
+| `/plot <表达式>` | 一元函数、多函数对比、二维隐式曲线 | `/plot sin(x), cos(x)` |
+| `/plot3d <z=f(x,y)>` | 单个三维曲面 | `/plot3d sin(sqrt(x^2+y^2))` |
+| `/plot3dm <表达式1>, <表达式2>` | 多个三维曲面叠加对比 | `/plot3dm x^2+y^2, sqrt(x^2+y^2)` |
+| `/implicit3d <F(x,y,z)=0>` | 三维隐式曲面切片图 | `/implicit3d x^2+y^2+z^2=1` |
+| `/spherical <r=f(theta,phi)>` | 球坐标曲面 | `/spherical 1+0.3*sin(4*theta)*cos(3*phi)` |
+| `/polar <r=f(theta)>` | 极坐标曲线 | `/polar sin(3*theta)` |
+| `/parametric <x(t)>, <y(t)>` | 二维参数曲线 | `/parametric cos(t), sin(t)` |
+| `/parametric3d <x(t)>, <y(t)>, <z(t)>` | 三维参数曲线，按 `t` 渐变上色 | `/parametric3d sin(2*t), cos(3*t), t/4` |
+| `/vector2d <Fx(x,y)>, <Fy(x,y)>` | 二维向量场 | `/vector2d -y, x` |
+| `/vector3d <向量定义>` | 三维空间向量 | `/vector3d 1,2,3:red:v1 ; 0,0,0->3,4,1:blue:v2` |
+| `/plotstatus` | 查看绘图缓存和默认设置 | `/plotstatus` |
+
+三维向量定义格式：
+
 ```text
-/plot <表达式>
-/plot3d <z=f(x,y)>
-/polar <r=f(theta)>
-/parametric <x(t)>, <y(t)>
-/vector2d <Fx(x,y)>, <Fy(x,y)>
-/parametric3d <x(t)>, <y(t)>, <z(t)>
-/plotstatus
+x,y,z:颜色:标签
+x1,y1,z1->x2,y2,z2:颜色:标签
 ```
 
-示例：
-
-```text
-/plot sin(x), cos(x)
-/plot x^2 + y^2 = 1
-/plot3d sin(sqrt(x^2+y^2))
-/polar sin(3*theta)
-/parametric cos(t), sin(t)
-/parametric3d sin(2*t), cos(3*t), t/4
-/vector2d -y, x
-```
+颜色可以写 `red`、`blue`、`green`、`orange`、`purple`，也可以写 `#RRGGBB`。
 
 ### 清理临时文件
 
@@ -97,10 +100,23 @@
 - `plot_polar`
 - `plot_parametric`
 - `plot_3d_function`
+- `plot_3d_multiple`
+- `plot_3d_spherical`
+- `plot_implicit_3d`
 - `plot_3d_parametric`
 - `plot_vector_field_2d`
+- `plot_vector_3d`
 
 推荐效果是：用户正常问数学题时，bot 直接调用 `render_math_solution_card`，把文字解答、公式、几何图或函数图像合并成一张图卡，而不是先发一堆散图。
+
+工具选择规则：
+
+- `plot_3d_function`：只画一个 `z=f(x,y)` 曲面。
+- `plot_3d_multiple`：比较多个 `z=f(x,y)` 曲面。
+- `plot_3d_spherical`：画 `r=f(theta,phi)` 这类球坐标曲面。
+- `plot_implicit_3d`：画 `F(x,y,z)=0` 这类三维隐式曲面，例如球面、双曲面。
+- `plot_3d_parametric`：画 `x=...`、`y=...`、`z=...` 三个关于 `t` 的参数方程。
+- `plot_vector_3d`：画有限个空间向量，不是向量场。
 
 ## 几何图能力
 
@@ -180,8 +196,21 @@
 - `polar`
 - `parametric`
 - `surface`
+- `multiple_surfaces`
+- `spherical`
+- `implicit3d`
 - `parametric3d`
 - `vector_field_2d`
+- `vector3d`
+
+常用 `plot_spec_json` 示例：
+
+```text
+{"kind":"multiple_surfaces","expressions":["x^2+y^2","sqrt(x^2+y^2)"],"x_range":"-3,3","y_range":"-3,3"}
+{"kind":"spherical","expression":"1+0.3*sin(4*theta)*cos(3*phi)","theta_range":"0,pi","phi_range":"0,2*pi"}
+{"kind":"implicit3d","expression":"x^2+y^2+z^2=1","x_range":"-1.5,1.5","y_range":"-1.5,1.5","z_range":"-1.5,1.5"}
+{"kind":"vector3d","vectors":"1,2,3:red:v1; 0,0,0->3,4,1:blue:v2"}
+```
 
 ## 配置模块
 
@@ -248,6 +277,7 @@ playwright>=1.50.0
 sympy>=1.13
 markdown>=3.6
 matplotlib>=3.8
+numpy>=1.24
 ```
 
 说明：
@@ -256,10 +286,11 @@ matplotlib>=3.8
 - `sympy`：表达式转 LaTeX、几何派生点计算。
 - `markdown`：Markdown 转 HTML。
 - `matplotlib`：几何图和函数图像绘制。
+- `numpy`：函数采样、曲面网格和向量场计算。
 
 ## 参考项目
 
-函数绘图能力的模式覆盖和交互设计参考了 [D1ff1culTT/astrbot_plugin_math_plotter](https://github.com/D1ff1culTT/astrbot_plugin_math_plotter)。本插件在此基础上将绘图能力整合进解题图卡、LLM 工具调用和配置模块，便于在数学讲解中把文字、公式和图像放进同一张卡片。
+函数绘图能力的模式覆盖和交互设计参考了 [D1ff1culTT/astrbot_plugin_math_plotter](https://github.com/D1ff1culTT/astrbot_plugin_math_plotter)，包括多曲面、球坐标曲面、三维隐式曲面和三维向量等专项绘图方向。本插件在此基础上将绘图能力整合进解题图卡、LLM 工具调用和配置模块，便于在数学讲解中把文字、公式和图像放进同一张卡片。
 
 ## 兼容性
 

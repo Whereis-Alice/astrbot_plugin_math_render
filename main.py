@@ -40,9 +40,13 @@ SOLVE_COMMANDS = ("mathsolveimg", "解答渲染", "数学出图", "题目出图"
 CLEANUP_COMMANDS = ("mathimgcleanup", "渲染清理", "公式清理")
 PLOT_COMMANDS = ("plot", "mathplot", "functionplot", "函数绘图", "绘图")
 PLOT3D_COMMANDS = ("plot3d", "surfaceplot", "三维绘图", "曲面绘图")
+PLOT3D_MULTIPLE_COMMANDS = ("plot3dm", "plot3dmultiple", "多曲面绘图", "三维多曲面")
+SPHERICAL3D_COMMANDS = ("spherical", "spherical3d", "球坐标绘图", "球坐标曲面")
+IMPLICIT3D_COMMANDS = ("implicit3d", "implicit3D", "三维隐式", "隐式曲面")
 POLAR_COMMANDS = ("polar", "polarplot", "极坐标绘图")
 PARAMETRIC_COMMANDS = ("parametric", "paramplot", "参数绘图")
 VECTOR_FIELD_COMMANDS = ("vector2d", "vectorfield", "向量场")
+VECTOR3D_COMMANDS = ("vector3d", "三维向量", "空间向量")
 PARAMETRIC3D_COMMANDS = ("parametric3d", "param3d", "三维参数曲线")
 
 MATH_SIGNAL_PATTERNS = (
@@ -146,22 +150,29 @@ DEFAULT_PLOT_KEYWORDS = (
     "函数作图",
     "曲线",
     "曲面",
+    "多曲面",
+    "隐式曲面",
+    "球坐标",
     "极坐标",
     "参数方程",
     "参数曲线",
     "向量场",
+    "三维向量",
     "plot",
     "graph",
     "curve",
     "surface",
+    "spherical",
+    "implicit3d",
     "polar",
     "parametric",
     "vector field",
+    "vector3d",
     "function graph",
     "function plot",
 )
 
-PLOT_TOOL_AWARENESS_PROMPT = """When the user asks to draw or compare math functions, curves, implicit equations, polar curves, parametric curves, 3D surfaces, or 2D vector fields, you can call the plotting tools from this plugin.
+PLOT_TOOL_AWARENESS_PROMPT = """When the user asks to draw or compare math functions, curves, implicit equations, polar curves, parametric curves, 3D surfaces, spherical surfaces, implicit 3D surfaces, or vector diagrams, you can call the plotting tools from this plugin.
 
 Available plotting tools:
 - `plot_function`: draw one-variable functions y=f(x).
@@ -170,12 +181,17 @@ Available plotting tools:
 - `plot_polar`: draw polar curves r=f(theta).
 - `plot_parametric`: draw 2D parametric curves x=f(t), y=g(t).
 - `plot_3d_function`: draw 3D surfaces z=f(x,y). Use this only when there is one z expression in x and y.
+- `plot_3d_multiple`: compare multiple 3D surfaces z=f(x,y) in one 3D coordinate system.
+- `plot_3d_spherical`: draw spherical-coordinate surfaces r=f(theta,phi), where theta is polar angle and phi is azimuth.
+- `plot_implicit_3d`: draw implicit 3D surfaces F(x,y,z)=0, such as spheres and hyperboloids.
 - `plot_3d_parametric`: draw 3D parametric curves x=f(t), y=g(t), z=h(t). Use this for three equations like x=sin(2t), y=cos(3t), z=t/4.
 - `plot_vector_field_2d`: draw 2D vector fields F=(Fx(x,y), Fy(x,y)).
+- `plot_vector_3d`: draw finite 3D vectors such as "1,2,3:red:v1; 0,0,0->3,4,1:blue:v2".
 
 Tool selection rule: if a screenshot or prompt shows three equations `x=...`, `y=...`, and `z=...` using parameter `t`, it is a 3D parametric curve, even if the user casually says "3D surface" or "三维曲面". Do not replace the user's formulas with an unrelated surface such as z=cos(x)cos(y).
+If the user asks for r=f(theta,phi), spherical coordinates, radiation lobes, or 球坐标曲面, use `plot_3d_spherical`. If the formula contains x, y, and z in one equation such as x^2+y^2+z^2=1, use `plot_implicit_3d`. If the user asks to compare several z=f(x,y) surfaces, use `plot_3d_multiple`.
 
-Use formula or solution-card rendering for normal formula display or step-by-step answers. Use plotting tools when the user explicitly wants a graph, curve, surface, or vector field."""
+Use formula or solution-card rendering for normal formula display or step-by-step answers. Use plotting tools when the user explicitly wants a graph, curve, surface, or vector diagram."""
 
 PLOT_IN_SOLUTION_CARD_PROMPT = """`render_math_solution_card` can embed a generated plot inside the same solution card.
 
@@ -188,10 +204,15 @@ Supported `plot_spec_json` examples:
 - Polar: {"kind":"polar","expression":"sin(3*theta)","theta_range":"0,2*pi"}
 - Parametric: {"kind":"parametric","x_expression":"cos(t)","y_expression":"sin(t)","t_range":"0,2*pi"}
 - Surface: {"kind":"surface","expression":"sin(sqrt(x^2+y^2))","x_range":"-6,6","y_range":"-6,6"}
+- Multiple 3D surfaces: {"kind":"multiple_surfaces","expressions":["x^2+y^2","sqrt(x^2+y^2)"],"x_range":"-3,3","y_range":"-3,3"}
+- Spherical surface: {"kind":"spherical","expression":"1+0.35*sin(4*theta)*cos(3*phi)","theta_range":"0,pi","phi_range":"0,2*pi"}
+- Implicit 3D surface: {"kind":"implicit3d","expression":"x^2+y^2+z^2=1","x_range":"-1.5,1.5","y_range":"-1.5,1.5","z_range":"-1.5,1.5"}
 - 3D parametric: {"kind":"parametric3d","x_expression":"cos(t)","y_expression":"sin(t)","z_expression":"t/5","t_range":"0,4*pi"}
 - Vector field: {"kind":"vector_field_2d","x_expression":"-y","y_expression":"x","x_range":"-5,5","y_range":"-5,5"}
+- 3D vectors: {"kind":"vector3d","vectors":"1,2,3:red:v1; 0,0,0->3,4,1:blue:v2"}
 
 If the source has `x=...`, `y=...`, and `z=...` as functions of `t`, use kind `parametric3d`; do not use kind `surface`.
+If the source is a single equation involving x, y, and z, use kind `implicit3d`. If the source is r=f(theta,phi), use kind `spherical`.
 
 Also pass `plot_caption` when a short caption helps. Use `plot_position` only when needed; valid values match geometry positions such as `after_key_formula`, `before_answer`, and `after_answer`."""
 
@@ -428,6 +449,49 @@ class MathRenderPlugin(Star):
             return
         yield self._image_result_for_send(event, result.path)
 
+    @filter.command("plot3dm", alias=["plot3dmultiple", "多曲面绘图", "三维多曲面"])
+    async def plot3dm(self, event: AstrMessageEvent):
+        payload = self._extract_payload(event.message_str, PLOT3D_MULTIPLE_COMMANDS)
+        parts = self.plotter.split_expressions(payload)
+        if len(parts) < 2:
+            yield event.plain_result("用法: /plot3dm <表达式1>, <表达式2>，例如: /plot3dm x^2+y^2, sqrt(x^2+y^2)")
+            return
+        try:
+            result = self.plotter.plot_multiple_surfaces(payload)
+        except Exception as exc:
+            logger.exception("plot3dm command failed")
+            yield event.plain_result(f"多曲面绘图失败: {exc}")
+            return
+        yield self._image_result_for_send(event, result.path)
+
+    @filter.command("spherical", alias=["spherical3d", "球坐标绘图", "球坐标曲面"])
+    async def spherical3d(self, event: AstrMessageEvent):
+        payload = self._extract_payload(event.message_str, SPHERICAL3D_COMMANDS)
+        if not payload:
+            yield event.plain_result("用法: /spherical <r=f(theta,phi)>，例如: /spherical 1+0.3*sin(4*theta)*cos(3*phi)")
+            return
+        try:
+            result = self.plotter.plot_spherical_3d(payload)
+        except Exception as exc:
+            logger.exception("spherical command failed")
+            yield event.plain_result(f"球坐标曲面绘图失败: {exc}")
+            return
+        yield self._image_result_for_send(event, result.path)
+
+    @filter.command("implicit3d", alias=["implicit3D", "三维隐式", "隐式曲面"])
+    async def implicit3d(self, event: AstrMessageEvent):
+        payload = self._extract_payload(event.message_str, IMPLICIT3D_COMMANDS)
+        if not payload:
+            yield event.plain_result("用法: /implicit3d <F(x,y,z)=0>，例如: /implicit3d x^2+y^2+z^2=1")
+            return
+        try:
+            result = self.plotter.plot_implicit_3d(payload)
+        except Exception as exc:
+            logger.exception("implicit3d command failed")
+            yield event.plain_result(f"隐式三维曲面绘图失败: {exc}")
+            return
+        yield self._image_result_for_send(event, result.path)
+
     @filter.command("polar", alias=["polarplot"])
     async def polar(self, event: AstrMessageEvent):
         payload = self._extract_payload(event.message_str, POLAR_COMMANDS)
@@ -469,6 +533,23 @@ class MathRenderPlugin(Star):
         except Exception as exc:
             logger.exception("vector2d command failed")
             yield event.plain_result(f"向量场绘图失败: {exc}")
+            return
+        yield self._image_result_for_send(event, result.path)
+
+    @filter.command("vector3d", alias=["三维向量", "空间向量"])
+    async def vector3d(self, event: AstrMessageEvent):
+        payload = self._extract_payload(event.message_str, VECTOR3D_COMMANDS)
+        if not payload:
+            yield event.plain_result(
+                "用法: /vector3d <向量定义>[; <向量定义>]\n"
+                "示例: /vector3d 1,2,3:red:v1 ; 0,0,0->3,4,1:blue:v2"
+            )
+            return
+        try:
+            result = self.plotter.plot_vectors_3d(payload)
+        except Exception as exc:
+            logger.exception("vector3d command failed")
+            yield event.plain_result(f"三维向量绘图失败: {exc}")
             return
         yield self._image_result_for_send(event, result.path)
 
@@ -859,6 +940,138 @@ class MathRenderPlugin(Star):
             return
         yield self._tool_direct_send_result(result.description)
 
+    @filter.llm_tool(name="plot_3d_multiple")
+    async def plot_3d_multiple_tool(
+        self,
+        event: AstrMessageEvent,
+        expressions: str,
+        x_range: str = "",
+        y_range: str = "",
+        title: str = "",
+        xlabel: str = "",
+        ylabel: str = "",
+        zlabel: str = "",
+    ):
+        """Draw multiple 3D surfaces z=f(x,y) in one 3D coordinate system.
+
+        Args:
+            expressions(string): Comma-separated surface expressions in x and y, for example "x**2+y**2, sqrt(x**2+y**2)".
+            x_range(string): Optional x range as "min,max".
+            y_range(string): Optional y range as "min,max".
+            title(string): Optional plot title.
+            xlabel(string): Optional x-axis label.
+            ylabel(string): Optional y-axis label.
+            zlabel(string): Optional z-axis label.
+        """
+        try:
+            result = self.plotter.plot_multiple_surfaces(
+                expressions,
+                x_range=x_range,
+                y_range=y_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+                zlabel=zlabel,
+            )
+        except Exception as exc:
+            logger.exception("plot_3d_multiple tool failed")
+            yield f"Plot failed: {exc}"
+            return
+        fallback = await self._send_image_from_tool(event, result.path, result.description)
+        if fallback:
+            yield fallback
+            return
+        yield self._tool_direct_send_result(result.description)
+
+    @filter.llm_tool(name="plot_3d_spherical")
+    async def plot_3d_spherical_tool(
+        self,
+        event: AstrMessageEvent,
+        expression: str,
+        theta_range: str = "",
+        phi_range: str = "",
+        title: str = "",
+        xlabel: str = "",
+        ylabel: str = "",
+        zlabel: str = "",
+    ):
+        """Draw a spherical-coordinate 3D surface r=f(theta,phi).
+
+        Args:
+            expression(string): Radius expression in theta and phi, for example "1+0.3*sin(4*theta)*cos(3*phi)".
+            theta_range(string): Optional theta range as "min,max"; default is "0,pi".
+            phi_range(string): Optional phi range as "min,max"; default is "0,2*pi".
+            title(string): Optional plot title.
+            xlabel(string): Optional x-axis label.
+            ylabel(string): Optional y-axis label.
+            zlabel(string): Optional z-axis label.
+        """
+        try:
+            result = self.plotter.plot_spherical_3d(
+                expression,
+                theta_range=theta_range,
+                phi_range=phi_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+                zlabel=zlabel,
+            )
+        except Exception as exc:
+            logger.exception("plot_3d_spherical tool failed")
+            yield f"Plot failed: {exc}"
+            return
+        fallback = await self._send_image_from_tool(event, result.path, result.description)
+        if fallback:
+            yield fallback
+            return
+        yield self._tool_direct_send_result(result.description)
+
+    @filter.llm_tool(name="plot_implicit_3d")
+    async def plot_implicit_3d_tool(
+        self,
+        event: AstrMessageEvent,
+        equation: str,
+        x_range: str = "",
+        y_range: str = "",
+        z_range: str = "",
+        title: str = "",
+        xlabel: str = "",
+        ylabel: str = "",
+        zlabel: str = "",
+    ):
+        """Draw an implicit 3D surface F(x,y,z)=0.
+
+        Args:
+            equation(string): Equation such as "x**2+y**2+z**2=1" or zero-form "x**2+y**2-z**2-1".
+            x_range(string): Optional x range as "min,max".
+            y_range(string): Optional y range as "min,max".
+            z_range(string): Optional z range as "min,max".
+            title(string): Optional plot title.
+            xlabel(string): Optional x-axis label.
+            ylabel(string): Optional y-axis label.
+            zlabel(string): Optional z-axis label.
+        """
+        try:
+            result = self.plotter.plot_implicit_3d(
+                equation,
+                x_range=x_range,
+                y_range=y_range,
+                z_range=z_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+                zlabel=zlabel,
+            )
+        except Exception as exc:
+            logger.exception("plot_implicit_3d tool failed")
+            yield f"Plot failed: {exc}"
+            return
+        fallback = await self._send_image_from_tool(event, result.path, result.description)
+        if fallback:
+            yield fallback
+            return
+        yield self._tool_direct_send_result(result.description)
+
     @filter.llm_tool(name="plot_3d_parametric")
     async def plot_3d_parametric_tool(
         self,
@@ -897,6 +1110,43 @@ class MathRenderPlugin(Star):
             )
         except Exception as exc:
             logger.exception("plot_3d_parametric tool failed")
+            yield f"Plot failed: {exc}"
+            return
+        fallback = await self._send_image_from_tool(event, result.path, result.description)
+        if fallback:
+            yield fallback
+            return
+        yield self._tool_direct_send_result(result.description)
+
+    @filter.llm_tool(name="plot_vector_3d")
+    async def plot_vector_3d_tool(
+        self,
+        event: AstrMessageEvent,
+        vectors: str,
+        title: str = "",
+        xlabel: str = "",
+        ylabel: str = "",
+        zlabel: str = "",
+    ):
+        """Draw finite 3D vectors as arrows in space.
+
+        Args:
+            vectors(string): Semicolon-separated vector definitions. Use "x,y,z:color:label" from origin or "x1,y1,z1->x2,y2,z2:color:label".
+            title(string): Optional plot title.
+            xlabel(string): Optional x-axis label.
+            ylabel(string): Optional y-axis label.
+            zlabel(string): Optional z-axis label.
+        """
+        try:
+            result = self.plotter.plot_vectors_3d(
+                vectors,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+                zlabel=zlabel,
+            )
+        except Exception as exc:
+            logger.exception("plot_vector_3d tool failed")
             yield f"Plot failed: {exc}"
             return
         fallback = await self._send_image_from_tool(event, result.path, result.description)
@@ -1497,24 +1747,43 @@ class MathRenderPlugin(Star):
             "3d_surface": "surface",
             "3d_function": "surface",
             "function3d": "surface",
+            "surfaces": "multiple_surfaces",
+            "multiple_surface": "multiple_surfaces",
+            "surface_multiple": "multiple_surfaces",
+            "multiple_3d": "multiple_surfaces",
+            "3d_multiple": "multiple_surfaces",
+            "plot_3d_multiple": "multiple_surfaces",
+            "spherical3d": "spherical",
+            "spherical_surface": "spherical",
+            "3d_spherical": "spherical",
+            "plot_3d_spherical": "spherical",
+            "implicit_3d": "implicit3d",
+            "3d_implicit": "implicit3d",
+            "implicit_surface": "implicit3d",
+            "plot_implicit_3d": "implicit3d",
             "parametric_3d": "parametric3d",
             "3d_parametric": "parametric3d",
             "vector_field": "vector_field_2d",
             "vector2d": "vector_field_2d",
+            "vector_3d": "vector3d",
+            "3d_vector": "vector3d",
+            "plot_vector_3d": "vector3d",
         }
         kind = kind_aliases.get(kind, kind)
         if not kind:
             kind = self._infer_plot_kind(spec)
 
-        expression = self._plot_spec_text(spec, "expression", "equation", "expr", "formula")
+        expression = self._plot_spec_text(spec, "expression", "equation", "expr", "formula", "radius_expression", "r_expression", "r")
         title = self._plot_spec_text(spec, "title")
         xlabel = self._plot_spec_text(spec, "xlabel", "x_label")
         ylabel = self._plot_spec_text(spec, "ylabel", "y_label")
         zlabel = self._plot_spec_text(spec, "zlabel", "z_label")
         x_range = self._plot_spec_text(spec, "x_range", "xrange")
         y_range = self._plot_spec_text(spec, "y_range", "yrange")
+        z_range = self._plot_spec_text(spec, "z_range", "zrange")
         t_range = self._plot_spec_text(spec, "t_range", "trange")
         theta_range = self._plot_spec_text(spec, "theta_range", "thetarange")
+        phi_range = self._plot_spec_text(spec, "phi_range", "phirange")
         parametric_3d_parts = self._parse_3d_parametric_equations(expression)
 
         if kind == "function":
@@ -1570,6 +1839,37 @@ class MathRenderPlugin(Star):
                 ylabel=ylabel,
                 zlabel=zlabel,
             )
+        if kind == "multiple_surfaces":
+            return self.plotter.plot_multiple_surfaces(
+                self._plot_spec_expressions(spec),
+                x_range=x_range,
+                y_range=y_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+                zlabel=zlabel,
+            )
+        if kind == "spherical":
+            return self.plotter.plot_spherical_3d(
+                self._strip_equation_lhs(expression, allowed_lhs=("r", "r(theta,phi)", "r(θ,φ)")),
+                theta_range=theta_range,
+                phi_range=phi_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+                zlabel=zlabel,
+            )
+        if kind == "implicit3d":
+            return self.plotter.plot_implicit_3d(
+                expression,
+                x_range=x_range,
+                y_range=y_range,
+                z_range=z_range,
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+                zlabel=zlabel,
+            )
         if kind == "parametric3d":
             x_expression = self._strip_equation_lhs(self._plot_spec_text(spec, "x_expression", "x_expr", "x"), allowed_lhs=("x", "x(t)"))
             y_expression = self._strip_equation_lhs(self._plot_spec_text(spec, "y_expression", "y_expr", "y"), allowed_lhs=("y", "y(t)"))
@@ -1598,19 +1898,35 @@ class MathRenderPlugin(Star):
                 xlabel=xlabel,
                 ylabel=ylabel,
             )
+        if kind == "vector3d":
+            return self.plotter.plot_vectors_3d(
+                self._plot_spec_vectors(spec),
+                title=title,
+                xlabel=xlabel,
+                ylabel=ylabel,
+                zlabel=zlabel,
+            )
 
         raise ValueError(f"Unsupported plot_spec kind: {kind or '<empty>'}")
 
     def _infer_plot_kind(self, spec: dict[str, Any]) -> str:
+        if spec.get("vectors"):
+            return "vector3d"
         if spec.get("expressions"):
             return "multiple"
+        if spec.get("phi_range") or spec.get("phirange"):
+            return "spherical"
         if spec.get("z_expression") or spec.get("z_expr"):
             return "parametric3d"
         if (spec.get("x_expression") or spec.get("x_expr")) and (spec.get("y_expression") or spec.get("y_expr")):
             return "parametric"
-        expression = self._plot_spec_text(spec, "expression", "equation", "expr", "formula")
+        expression = self._plot_spec_text(spec, "expression", "equation", "expr", "formula", "radius_expression", "r_expression", "r")
         if self._parse_3d_parametric_equations(expression):
             return "parametric3d"
+        if re.search(r"(?<![A-Za-z])z(?![A-Za-z])", expression) and "=" in expression:
+            return "implicit3d"
+        if "theta" in expression and "phi" in expression:
+            return "spherical"
         if "theta" in expression or spec.get("theta_range"):
             return "polar"
         if "=" in expression and not re.match(r"^\s*y\s*=", expression, re.IGNORECASE):
@@ -1635,6 +1951,14 @@ class MathRenderPlugin(Star):
             return ", ".join(str(item).strip() for item in expressions if str(item).strip())
         if expressions is not None:
             return str(expressions).strip()
+        return self._plot_spec_text(spec, "expression", "equation", "expr", "formula")
+
+    def _plot_spec_vectors(self, spec: dict[str, Any]) -> str:
+        vectors = spec.get("vectors")
+        if isinstance(vectors, (list, tuple)):
+            return "; ".join(str(item).strip() for item in vectors if str(item).strip())
+        if vectors is not None:
+            return str(vectors).strip()
         return self._plot_spec_text(spec, "expression", "equation", "expr", "formula")
 
     def _parse_3d_parametric_equations(self, text: str) -> dict[str, str] | None:

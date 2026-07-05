@@ -1,5 +1,17 @@
 # Changelog
 
+## [v0.4.12] - 2026-07-05
+
+### Added
+
+- 融合参考插件的专项绘图能力，新增 `plot_3d_multiple`、`plot_3d_spherical`、`plot_implicit_3d`、`plot_vector_3d` 四个 LLM 工具，并新增手动命令 `/plot3dm`、`/spherical`、`/implicit3d`、`/vector3d`。
+- `render_math_solution_card` 的 `plot_spec_json` 支持 `multiple_surfaces`、`spherical`、`implicit3d`、`vector3d`，可把多曲面、球坐标曲面、三维隐式曲面和三维向量图嵌入同一张解题图卡。
+- README 详细补充绘图命令、LLM 工具选择规则、三维向量格式和新增 `plot_spec_json` 示例。
+
+### Changed
+
+- 扩展绘图工具提示、解题绘图提示和配置 schema 默认文案，让 bot 能区分 `z=f(x,y)` 曲面、多曲面对比、球坐标曲面、三维隐式曲面和三维参数曲线。
+
 ## [v0.4.11] - 2026-07-05
 
 ### Changed

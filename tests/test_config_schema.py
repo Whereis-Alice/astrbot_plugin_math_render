@@ -39,6 +39,9 @@ class ConfigSchemaTests(unittest.TestCase):
         plot_item = schema["plot_settings"]["items"]["plot_tool_prompt_enabled"]
         self.assertEqual(plot_item["description"], "启用 LLM 绘图工具提示注入")
         self.assertNotIn("Enable LLM", plot_item["description"])
+        prompt = schema["plot_settings"]["items"]["plot_tool_awareness_prompt"]["default"]
+        self.assertIn("plot_3d_spherical", prompt)
+        self.assertIn("plot_implicit_3d", prompt)
 
 
 if __name__ == "__main__":

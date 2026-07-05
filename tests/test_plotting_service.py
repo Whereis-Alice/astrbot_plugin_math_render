@@ -60,6 +60,30 @@ class PlottingServiceTests(unittest.TestCase):
         self.assertGreater(int(np.count_nonzero(warm_gradient_pixels)), 50)
         self.assertGreater(int(np.count_nonzero(cool_gradient_pixels)), 50)
 
+    def test_extra_3d_plot_modes_render_images(self) -> None:
+        plotter = MathPlotService(
+            {
+                "enable_cache": False,
+                "plot_dpi": 70,
+                "plot_3d_grid_density": 32,
+                "plot_implicit_3d_grid_density": 36,
+                "plot_implicit_3d_slices": 18,
+            },
+            self.temp_dir,
+        )
+
+        results = [
+            plotter.plot_spherical_3d("1+0.2*sin(3*theta)*cos(2*phi)"),
+            plotter.plot_multiple_surfaces("x**2+y**2, sqrt(x**2+y**2)", x_range="-1,1", y_range="-1,1"),
+            plotter.plot_implicit_3d("x**2+y**2+z**2=1", x_range="-1.2,1.2", y_range="-1.2,1.2", z_range="-1.2,1.2"),
+            plotter.plot_vectors_3d("1,2,3:red:v1; 0,0,0->3,4,1:blue:v2"),
+        ]
+
+        for result in results:
+            with self.subTest(path=result.path):
+                self.assertTrue(result.path.exists())
+                self.assertGreater(result.path.stat().st_size, 1000)
+
 
 if __name__ == "__main__":
     unittest.main()

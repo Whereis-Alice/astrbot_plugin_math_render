@@ -92,6 +92,7 @@ Supported `plot_spec` forms:
 }
 
 Optional plot fields: `xlabel`, `ylabel`, `zlabel`, `plot_caption`, and `plot_position`.
+If the source gives three equations x=..., y=..., and z=... as functions of t, use kind `parametric3d`; do not convert it into a surface kind.
 Use plot specs only when the graph materially helps the solution. Do not put prose or code in `plot_spec`; it must be plain JSON data."""
 
 

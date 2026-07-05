@@ -665,7 +665,7 @@
       "plot_tool_awareness_prompt": {
         "type": "text",
         "description": "LLM 绘图工具提醒模板",
-        "default": "当用户要求绘制或比较函数图像、曲线、隐式方程、极坐标曲线、参数曲线、三维曲面或二维向量场时，你可以调用本插件的绘图工具。可用工具：plot_function、plot_multiple、plot_implicit、plot_polar、plot_parametric、plot_3d_function、plot_3d_parametric、plot_vector_field_2d。",
+        "default": "当用户要求绘制或比较函数图像、曲线、隐式方程、极坐标曲线、参数曲线、三维曲面或二维向量场时，你可以调用本插件的绘图工具。可用工具：plot_function、plot_multiple、plot_implicit、plot_polar、plot_parametric、plot_3d_function、plot_3d_parametric、plot_vector_field_2d。\n工具选择规则：`plot_3d_function` 只用于一个形如 z=f(x,y) 的三维曲面；如果题目或图片里是 x=...、y=...、z=... 三个关于 t 的方程，即使用户口头说“三维曲面”，也应使用 `plot_3d_parametric`。不要把用户给出的参数方程替换成无关的 z=cos(x)cos(y) 之类曲面。",
         "hint": "仅在识别到绘图意图且启用绘图工具提示时注入。"
       },
       "plot_in_solution_card_enabled": {
@@ -677,7 +677,7 @@
       "plot_solution_card_prompt": {
         "type": "text",
         "description": "解题图卡内嵌绘图提示模板",
-        "default": "render_math_solution_card 可以把生成的函数图像或曲线嵌入同一张解题图卡。遇到需要图像辅助理解的数学题时，优先一次性调用 render_math_solution_card，并传入 plot_spec_json，而不是单独先发一张绘图。plot_spec_json 支持 kind：function、multiple、implicit、polar、parametric、surface、parametric3d、vector_field_2d。",
+        "default": "render_math_solution_card 可以把生成的函数图像或曲线嵌入同一张解题图卡。遇到需要图像辅助理解的数学题时，优先一次性调用 render_math_solution_card，并传入 plot_spec_json，而不是单独先发一张绘图。plot_spec_json 支持 kind：function、multiple、implicit、polar、parametric、surface、parametric3d、vector_field_2d。若来源是 x=...、y=...、z=... 三个关于 t 的方程，请使用 kind=parametric3d，不要使用 surface。",
         "hint": "数学题或绘图请求中注入，让模型知道如何把绘图和解答合并成同一张图卡。"
       },
       "plot_solver_prompt": {
@@ -1534,7 +1534,7 @@
   "plot_tool_awareness_prompt": {
     "type": "text",
     "description": "LLM 绘图工具提醒模板",
-    "default": "当用户要求绘制或比较函数图像、曲线、隐式方程、极坐标曲线、参数曲线、三维曲面或二维向量场时，你可以调用本插件的绘图工具。可用工具：plot_function、plot_multiple、plot_implicit、plot_polar、plot_parametric、plot_3d_function、plot_3d_parametric、plot_vector_field_2d。",
+    "default": "当用户要求绘制或比较函数图像、曲线、隐式方程、极坐标曲线、参数曲线、三维曲面或二维向量场时，你可以调用本插件的绘图工具。可用工具：plot_function、plot_multiple、plot_implicit、plot_polar、plot_parametric、plot_3d_function、plot_3d_parametric、plot_vector_field_2d。\n工具选择规则：`plot_3d_function` 只用于一个形如 z=f(x,y) 的三维曲面；如果题目或图片里是 x=...、y=...、z=... 三个关于 t 的方程，即使用户口头说“三维曲面”，也应使用 `plot_3d_parametric`。不要把用户给出的参数方程替换成无关的 z=cos(x)cos(y) 之类曲面。",
     "hint": "仅在识别到绘图意图且启用绘图工具提示时注入。",
     "invisible": true
   },
@@ -1548,7 +1548,7 @@
   "plot_solution_card_prompt": {
     "type": "text",
     "description": "解题图卡内嵌绘图提示模板",
-    "default": "render_math_solution_card 可以把生成的函数图像或曲线嵌入同一张解题图卡。遇到需要图像辅助理解的数学题时，优先一次性调用 render_math_solution_card，并传入 plot_spec_json，而不是单独先发一张绘图。plot_spec_json 支持 kind：function、multiple、implicit、polar、parametric、surface、parametric3d、vector_field_2d。",
+    "default": "render_math_solution_card 可以把生成的函数图像或曲线嵌入同一张解题图卡。遇到需要图像辅助理解的数学题时，优先一次性调用 render_math_solution_card，并传入 plot_spec_json，而不是单独先发一张绘图。plot_spec_json 支持 kind：function、multiple、implicit、polar、parametric、surface、parametric3d、vector_field_2d。若来源是 x=...、y=...、z=... 三个关于 t 的方程，请使用 kind=parametric3d，不要使用 surface。",
     "hint": "数学题或绘图请求中注入，让模型知道如何把绘图和解答合并成同一张图卡。",
     "invisible": true
   },

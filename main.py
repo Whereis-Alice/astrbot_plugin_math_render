@@ -169,9 +169,11 @@ Available plotting tools:
 - `plot_implicit`: draw implicit equations F(x,y)=0.
 - `plot_polar`: draw polar curves r=f(theta).
 - `plot_parametric`: draw 2D parametric curves x=f(t), y=g(t).
-- `plot_3d_function`: draw 3D surfaces z=f(x,y).
-- `plot_3d_parametric`: draw 3D parametric curves x=f(t), y=g(t), z=h(t).
+- `plot_3d_function`: draw 3D surfaces z=f(x,y). Use this only when there is one z expression in x and y.
+- `plot_3d_parametric`: draw 3D parametric curves x=f(t), y=g(t), z=h(t). Use this for three equations like x=sin(2t), y=cos(3t), z=t/4.
 - `plot_vector_field_2d`: draw 2D vector fields F=(Fx(x,y), Fy(x,y)).
+
+Tool selection rule: if a screenshot or prompt shows three equations `x=...`, `y=...`, and `z=...` using parameter `t`, it is a 3D parametric curve, even if the user casually says "3D surface" or "三维曲面". Do not replace the user's formulas with an unrelated surface such as z=cos(x)cos(y).
 
 Use formula or solution-card rendering for normal formula display or step-by-step answers. Use plotting tools when the user explicitly wants a graph, curve, surface, or vector field."""
 
@@ -188,6 +190,8 @@ Supported `plot_spec_json` examples:
 - Surface: {"kind":"surface","expression":"sin(sqrt(x^2+y^2))","x_range":"-6,6","y_range":"-6,6"}
 - 3D parametric: {"kind":"parametric3d","x_expression":"cos(t)","y_expression":"sin(t)","z_expression":"t/5","t_range":"0,4*pi"}
 - Vector field: {"kind":"vector_field_2d","x_expression":"-y","y_expression":"x","x_range":"-5,5","y_range":"-5,5"}
+
+If the source has `x=...`, `y=...`, and `z=...` as functions of `t`, use kind `parametric3d`; do not use kind `surface`.
 
 Also pass `plot_caption` when a short caption helps. Use `plot_position` only when needed; valid values match geometry positions such as `after_key_formula`, `before_answer`, and `after_answer`."""
 
@@ -809,8 +813,12 @@ class MathRenderPlugin(Star):
     ):
         """Draw a 3D surface z=f(x,y).
 
+        Use this for surfaces with one z expression in x and y. If the target is
+        a 3D parametric curve such as x=sin(2*t), y=cos(3*t), z=t/4, call
+        plot_3d_parametric instead.
+
         Args:
-            expression(string): Surface expression in x and y, for example sin(sqrt(x**2+y**2)).
+            expression(string): Surface expression in x and y, for example sin(sqrt(x**2+y**2)). Do not pass x=..., y=..., z=... parametric equations here.
             x_range(string): Optional x range as "min,max".
             y_range(string): Optional y range as "min,max".
             title(string): Optional plot title.
@@ -819,15 +827,28 @@ class MathRenderPlugin(Star):
             zlabel(string): Optional z-axis label.
         """
         try:
-            result = self.plotter.plot_surface(
-                expression,
-                x_range=x_range,
-                y_range=y_range,
-                title=title,
-                xlabel=xlabel,
-                ylabel=ylabel,
-                zlabel=zlabel,
-            )
+            parametric_parts = self._parse_3d_parametric_equations(expression)
+            if parametric_parts:
+                self._debug("rerouting plot_3d_function parametric payload to plot_3d_parametric expression=%r", expression)
+                result = self.plotter.plot_parametric_3d(
+                    parametric_parts["x"],
+                    parametric_parts["y"],
+                    parametric_parts["z"],
+                    title=title or "3D Parametric Curve",
+                    xlabel=xlabel,
+                    ylabel=ylabel,
+                    zlabel=zlabel,
+                )
+            else:
+                result = self.plotter.plot_surface(
+                    expression,
+                    x_range=x_range,
+                    y_range=y_range,
+                    title=title,
+                    xlabel=xlabel,
+                    ylabel=ylabel,
+                    zlabel=zlabel,
+                )
         except Exception as exc:
             logger.exception("plot_3d_function tool failed")
             yield f"Plot failed: {exc}"
@@ -1494,6 +1515,7 @@ class MathRenderPlugin(Star):
         y_range = self._plot_spec_text(spec, "y_range", "yrange")
         t_range = self._plot_spec_text(spec, "t_range", "trange")
         theta_range = self._plot_spec_text(spec, "theta_range", "thetarange")
+        parametric_3d_parts = self._parse_3d_parametric_equations(expression)
 
         if kind == "function":
             expression = self._strip_equation_lhs(expression, allowed_lhs=("y", "f(x)"))
@@ -1549,10 +1571,17 @@ class MathRenderPlugin(Star):
                 zlabel=zlabel,
             )
         if kind == "parametric3d":
+            x_expression = self._strip_equation_lhs(self._plot_spec_text(spec, "x_expression", "x_expr", "x"), allowed_lhs=("x", "x(t)"))
+            y_expression = self._strip_equation_lhs(self._plot_spec_text(spec, "y_expression", "y_expr", "y"), allowed_lhs=("y", "y(t)"))
+            z_expression = self._strip_equation_lhs(self._plot_spec_text(spec, "z_expression", "z_expr", "z"), allowed_lhs=("z", "z(t)"))
+            if parametric_3d_parts:
+                x_expression = x_expression or parametric_3d_parts["x"]
+                y_expression = y_expression or parametric_3d_parts["y"]
+                z_expression = z_expression or parametric_3d_parts["z"]
             return self.plotter.plot_parametric_3d(
-                self._strip_equation_lhs(self._plot_spec_text(spec, "x_expression", "x_expr", "x"), allowed_lhs=("x", "x(t)")),
-                self._strip_equation_lhs(self._plot_spec_text(spec, "y_expression", "y_expr", "y"), allowed_lhs=("y", "y(t)")),
-                self._strip_equation_lhs(self._plot_spec_text(spec, "z_expression", "z_expr", "z"), allowed_lhs=("z", "z(t)")),
+                x_expression,
+                y_expression,
+                z_expression,
                 t_range=t_range,
                 title=title,
                 xlabel=xlabel,
@@ -1580,6 +1609,8 @@ class MathRenderPlugin(Star):
         if (spec.get("x_expression") or spec.get("x_expr")) and (spec.get("y_expression") or spec.get("y_expr")):
             return "parametric"
         expression = self._plot_spec_text(spec, "expression", "equation", "expr", "formula")
+        if self._parse_3d_parametric_equations(expression):
+            return "parametric3d"
         if "theta" in expression or spec.get("theta_range"):
             return "polar"
         if "=" in expression and not re.match(r"^\s*y\s*=", expression, re.IGNORECASE):
@@ -1605,6 +1636,27 @@ class MathRenderPlugin(Star):
         if expressions is not None:
             return str(expressions).strip()
         return self._plot_spec_text(spec, "expression", "equation", "expr", "formula")
+
+    def _parse_3d_parametric_equations(self, text: str) -> dict[str, str] | None:
+        candidate = (text or "").strip()
+        if not candidate:
+            return None
+
+        parts: dict[str, str] = {}
+        for piece in re.split(r"[,;，；\n]+", candidate):
+            match = re.match(r"^\s*([xyz])\s*(?:\([^)]*\))?\s*=\s*(.+?)\s*$", piece, re.IGNORECASE)
+            if not match:
+                continue
+            axis = match.group(1).lower()
+            expression = match.group(2).strip()
+            if expression:
+                parts[axis] = expression
+
+        if {"x", "y", "z"} <= parts.keys() and any(
+            re.search(r"(?<![A-Za-z])t(?![A-Za-z])", value, re.IGNORECASE) for value in parts.values()
+        ):
+            return parts
+        return None
 
     def _strip_equation_lhs(self, expression: str, *, allowed_lhs: tuple[str, ...]) -> str:
         text = (expression or "").strip()

@@ -530,7 +530,7 @@ class MathRenderPlugin(Star):
         if fallback:
             yield fallback
             return
-        yield None
+        yield self._tool_direct_send_result()
 
     @filter.llm_tool(name="render_math_solution_card")
     async def render_math_solution_card_tool(
@@ -611,7 +611,7 @@ class MathRenderPlugin(Star):
         if fallback:
             yield fallback
             return
-        yield None
+        yield self._tool_direct_send_result()
 
     @filter.llm_tool(name="plot_function")
     async def plot_function_tool(
@@ -648,7 +648,7 @@ class MathRenderPlugin(Star):
         if fallback:
             yield fallback
             return
-        yield None
+        yield self._tool_direct_send_result(result.description)
 
     @filter.llm_tool(name="plot_multiple")
     async def plot_multiple_tool(
@@ -685,7 +685,7 @@ class MathRenderPlugin(Star):
         if fallback:
             yield fallback
             return
-        yield None
+        yield self._tool_direct_send_result(result.description)
 
     @filter.llm_tool(name="plot_implicit")
     async def plot_implicit_tool(
@@ -725,7 +725,7 @@ class MathRenderPlugin(Star):
         if fallback:
             yield fallback
             return
-        yield None
+        yield self._tool_direct_send_result(result.description)
 
     @filter.llm_tool(name="plot_polar")
     async def plot_polar_tool(
@@ -752,7 +752,7 @@ class MathRenderPlugin(Star):
         if fallback:
             yield fallback
             return
-        yield None
+        yield self._tool_direct_send_result(result.description)
 
     @filter.llm_tool(name="plot_parametric")
     async def plot_parametric_tool(
@@ -792,7 +792,7 @@ class MathRenderPlugin(Star):
         if fallback:
             yield fallback
             return
-        yield None
+        yield self._tool_direct_send_result(result.description)
 
     @filter.llm_tool(name="plot_3d_function")
     async def plot_3d_function_tool(
@@ -835,7 +835,7 @@ class MathRenderPlugin(Star):
         if fallback:
             yield fallback
             return
-        yield None
+        yield self._tool_direct_send_result(result.description)
 
     @filter.llm_tool(name="plot_3d_parametric")
     async def plot_3d_parametric_tool(
@@ -881,7 +881,7 @@ class MathRenderPlugin(Star):
         if fallback:
             yield fallback
             return
-        yield None
+        yield self._tool_direct_send_result(result.description)
 
     @filter.llm_tool(name="plot_vector_field_2d")
     async def plot_vector_field_2d_tool(
@@ -924,7 +924,7 @@ class MathRenderPlugin(Star):
         if fallback:
             yield fallback
             return
-        yield None
+        yield self._tool_direct_send_result(result.description)
 
     async def _solve_question(self, event: AstrMessageEvent, question: str) -> SolutionCardContent:
         provider_id = await self._get_current_provider_id(event)
@@ -1210,6 +1210,15 @@ class MathRenderPlugin(Star):
         if description:
             fallback_text += f"\n\nImage description: {description}"
         return fallback_text
+
+    def _tool_direct_send_result(self, description: str = "") -> str:
+        message = (
+            "The rendered image has already been sent directly to the user. "
+            "Reply with one short natural follow-up only. Do not repeat the full solution or claim another send is needed."
+        )
+        if description:
+            message += f"\n\nImage description: {description}"
+        return message
 
     def _prepare_image_for_send(self, image_path: Path) -> Path | None:
         if not image_path.exists():

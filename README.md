@@ -223,6 +223,7 @@ debug_logging_enabled = true
 - `image send payload prepared transport=base64 ...`：说明当前走 base64 图片组件。
 - `image direct send complete method=context ...`：说明 LLM 工具场景已通过 AstrBot 主动发送链路把图片发出。
 - `math_render tool image context/event send failed ...`：说明直接发送失败，日志会带异常和图片路径；工具结果会提示模型改用 `send_message_to_user` 发送该路径。
+- 图片直发成功后，工具会返回一条简短状态，让 bot 继续补一句自然收尾；如果只看到图片没有收尾回复，请确认版本至少为 `v0.4.6`。
 
 默认发送方式是：
 

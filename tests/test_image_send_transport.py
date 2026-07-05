@@ -128,6 +128,14 @@ class ImageSendTransportTests(unittest.TestCase):
         self.assertIn("event.send failed", fallback)
         self.assertIn("plot ready", fallback)
 
+    def test_tool_direct_send_result_keeps_agent_loop_alive(self) -> None:
+        result = self._plugin()._tool_direct_send_result("plot ready")
+
+        self.assertIn("sent directly to the user", result)
+        self.assertIn("Reply with one short natural follow-up", result)
+        self.assertIn("plot ready", result)
+        self.assertNotEqual(result, "")
+
 
 if __name__ == "__main__":
     unittest.main()

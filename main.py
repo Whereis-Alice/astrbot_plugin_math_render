@@ -1455,10 +1455,18 @@ class MathRenderPlugin(Star):
                     session,
                     prepared_path,
                 )
-                if sent:
+                if sent is not False:
                     return None
                 errors.append("context.send_message returned False")
             except Exception as exc:
+                if self._is_ambiguous_image_send_timeout(exc):
+                    logger.warning(
+                        "math_render tool image context send timed out after platform dispatch; "
+                        "skip event fallback to avoid duplicate image: path=%s error=%s",
+                        prepared_path,
+                        exc,
+                    )
+                    return None
                 errors.append(f"context.send_message failed: {exc}")
                 logger.exception("math_render tool image context send failed: path=%s", prepared_path)
 
@@ -1482,6 +1490,17 @@ class MathRenderPlugin(Star):
         if description:
             fallback_text += f"\n\nImage description: {description}"
         return fallback_text
+
+    def _is_ambiguous_image_send_timeout(self, exc: Exception) -> bool:
+        result = getattr(exc, "result", None)
+        if isinstance(result, dict):
+            retcode = result.get("retcode")
+            message = " ".join(str(result.get(key, "")) for key in ("message", "wording"))
+            if str(retcode) == "1200" and "timeout" in message.lower():
+                return True
+
+        text = f"{type(exc).__name__}: {exc}".lower()
+        return "retcode=1200" in text and "timeout" in text
 
     def _tool_direct_send_result(self, description: str = "") -> str:
         message = (

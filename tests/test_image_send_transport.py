@@ -37,16 +37,29 @@ class FakeEvent:
 
 
 class FakeContext:
-    def __init__(self, *, result: bool = True, raise_error: Exception | None = None) -> None:
+    def __init__(self, *, result: object = True, raise_error: Exception | None = None) -> None:
         self.result = result
         self.raise_error = raise_error
         self.calls = []
 
-    async def send_message(self, session, chain) -> bool:
+    async def send_message(self, session, chain) -> object:
         self.calls.append((session, chain))
         if self.raise_error:
             raise self.raise_error
         return self.result
+
+
+class FakeAmbiguousTimeout(Exception):
+    def __init__(self) -> None:
+        self.result = {
+            "retcode": 1200,
+            "message": "Timeout: NTEvent serviceAndMethod:NodeIKernelMsgService/sendMsg",
+            "wording": "Timeout: NTEvent serviceAndMethod:NodeIKernelMsgService/sendMsg",
+        }
+        super().__init__(
+            "<ActionFailed status='failed', retcode=1200, "
+            "message='Timeout: NTEvent serviceAndMethod:NodeIKernelMsgService/sendMsg'>"
+        )
 
 
 class DictConfig(dict):
@@ -102,6 +115,17 @@ class ImageSendTransportTests(unittest.TestCase):
         self.assertEqual(chain.chain[0].path, str(self.image_path))
         self.assertEqual(event.sent_chains, [])
 
+    def test_tool_image_send_treats_context_none_return_as_success(self) -> None:
+        plugin = self._plugin()
+        plugin.context = FakeContext(result=None)
+        event = FakeEvent()
+
+        fallback = asyncio.run(plugin._send_image_from_tool(event, self.image_path))
+
+        self.assertIsNone(fallback)
+        self.assertEqual(len(plugin.context.calls), 1)
+        self.assertEqual(event.sent_chains, [])
+
     def test_tool_image_send_falls_back_to_event_send(self) -> None:
         plugin = self._plugin()
         plugin.context = FakeContext(result=False)
@@ -113,6 +137,17 @@ class ImageSendTransportTests(unittest.TestCase):
         self.assertEqual(len(plugin.context.calls), 1)
         self.assertEqual(len(event.sent_chains), 1)
         self.assertEqual(event.sent_chains[0].chain[0].path, str(self.image_path))
+
+    def test_tool_image_send_skips_event_fallback_on_ambiguous_context_timeout(self) -> None:
+        plugin = self._plugin()
+        plugin.context = FakeContext(raise_error=FakeAmbiguousTimeout())
+        event = FakeEvent()
+
+        fallback = asyncio.run(plugin._send_image_from_tool(event, self.image_path))
+
+        self.assertIsNone(fallback)
+        self.assertEqual(len(plugin.context.calls), 1)
+        self.assertEqual(event.sent_chains, [])
 
     def test_tool_image_send_failure_returns_builtin_tool_instruction(self) -> None:
         plugin = self._plugin()

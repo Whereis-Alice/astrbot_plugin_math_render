@@ -1,5 +1,11 @@
 # Changelog
 
+## [v0.4.9] - 2026-07-05
+
+### Changed
+
+- README 新增参考项目说明，标注函数绘图能力的模式覆盖和交互设计参考了 `D1ff1culTT/astrbot_plugin_math_plotter`，并说明本插件已将绘图整合进解题图卡与 LLM 工具调用流程。
+
 ## [v0.4.8] - 2026-07-05
 
 ### Changed

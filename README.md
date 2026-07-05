@@ -256,6 +256,10 @@ matplotlib>=3.8
 - `markdown`：Markdown 转 HTML。
 - `matplotlib`：几何图和函数图像绘制。
 
+## 参考项目
+
+函数绘图能力的模式覆盖和交互设计参考了 [D1ff1culTT/astrbot_plugin_math_plotter](https://github.com/D1ff1culTT/astrbot_plugin_math_plotter)。本插件在此基础上将绘图能力整合进解题图卡、LLM 工具调用和配置模块，便于在数学讲解中把文字、公式和图像放进同一张卡片。
+
 ## 兼容性
 
 - AstrBot：`>=4.16,<5`

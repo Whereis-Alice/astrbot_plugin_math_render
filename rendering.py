@@ -20,10 +20,8 @@ from astrbot.api import html_renderer, logger
 
 try:
     from .config_utils import get_config_value
-    from .geometry import DEFAULT_GEOMETRY_LABEL, GeometryRenderer
 except ImportError:  # pragma: no cover
     from config_utils import get_config_value
-    from geometry import DEFAULT_GEOMETRY_LABEL, GeometryRenderer
 
 try:
     from astrbot.core.utils.astrbot_path import get_astrbot_data_path
@@ -37,8 +35,10 @@ except Exception:  # pragma: no cover
 
 
 PLUGIN_NAME = "astrbot_plugin_math_render"
+DEFAULT_GEOMETRY_LABEL = "几何图"
 DEFAULT_MATHJAX_CDN = "https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-chtml-full.js"
 DEFAULT_RENDER_TIMEOUT_MS = 45000
+RENDER_CACHE_VERSION = "v2"
 DEFAULT_STYLE = "paper"
 DEFAULT_FONT_STACK = (
     '"Noto Sans SC", "Noto Sans CJK SC", "Source Han Sans SC", '
@@ -1025,13 +1025,12 @@ class MathRenderService:
         self._config = config or {}
         self._plugin_name = plugin_name
         self._init_lock = asyncio.Lock()
+        self._render_lock = asyncio.Lock()
         self._renderer_ready = False
+        self._geometry_lock: asyncio.Lock | None = None
+        self._last_cleanup_at = 0.0
         self._temp_dir = self._resolve_temp_dir()
-        self._geometry_renderer = GeometryRenderer(
-            config=self._config,
-            temp_dir=self._temp_dir,
-            debug=self._debug,
-        )
+        self._geometry_renderer: Any | None = None
 
     @property
     def temp_dir(self) -> Path:
@@ -1048,9 +1047,12 @@ class MathRenderService:
 
         if self._text("render_backend", "auto").lower() == "local":
             self._debug("prepare skipped remote prewarm because backend=local")
+            self._renderer_ready = True
             return
-        if not self._bool("prewarm_renderer", True):
+        if not self._bool("prewarm_renderer", False):
             self._debug("prepare skipped remote prewarm because prewarm_renderer=false")
+            # html_render performs its own lazy initialization when needed.
+            self._renderer_ready = True
             return
 
         async with self._init_lock:
@@ -1065,6 +1067,21 @@ class MathRenderService:
                 logger.warning("math_render plugin failed to prewarm html renderer: %s", exc)
                 self._debug("remote html renderer prewarm failed: %s", exc)
 
+    def _get_geometry_renderer(self) -> Any:
+        """Import Matplotlib/SymPy geometry support only for geometry cards."""
+
+        if self._geometry_renderer is None:
+            try:
+                from .geometry import GeometryRenderer
+            except ImportError:  # pragma: no cover
+                from geometry import GeometryRenderer
+            self._geometry_renderer = GeometryRenderer(
+                config=self._config,
+                temp_dir=self._temp_dir,
+                debug=self._debug,
+            )
+        return self._geometry_renderer
+
     async def cleanup_temp_files(self, purge_all: bool = False) -> int:
         self.temp_dir.mkdir(parents=True, exist_ok=True)
         ttl_hours = self._int("temp_retention_hours", 24)
@@ -1072,6 +1089,10 @@ class MathRenderService:
             return 0
 
         now = time.time()
+        interval = max(self._int("cleanup_interval_seconds", 60), 0)
+        if not purge_all and interval and now - self._last_cleanup_at < interval:
+            return 0
+
         cutoff = now - max(ttl_hours, 0) * 3600
         removed = 0
         for path in self.temp_dir.glob("*"):
@@ -1083,6 +1104,7 @@ class MathRenderService:
                     removed += 1
             except FileNotFoundError:
                 continue
+        self._last_cleanup_at = now
         self._debug("cleanup_temp_files purge_all=%s removed=%s", purge_all, removed)
         return removed
 
@@ -1113,8 +1135,7 @@ class MathRenderService:
             },
         )
         target_path = self.temp_dir / f"formula_{render_key}.png"
-        if self._bool("enable_cache", True) and target_path.exists():
-            target_path.touch()
+        if self._cached_file(target_path):
             return target_path
 
         payload = self._theme_context(theme)
@@ -1136,7 +1157,10 @@ class MathRenderService:
         await self._before_render()
         theme = self._resolve_theme(content.style_hint, content.accent_color)
         steps = [step.strip() for step in (content.steps or []) if step and step.strip()]
-        geometry_payload = self._prepare_geometry_payload(content)
+        # Resolve only the layout position while computing the cache key.  The
+        # expensive geometry renderer is loaded after the cache miss check so a
+        # repeated card does not import Matplotlib/SymPy or redraw its diagram.
+        geometry_position = self._empty_geometry_payload(content)["geometry_position"]
         render_key = self._make_cache_key(
             "solution",
             {
@@ -1153,7 +1177,7 @@ class MathRenderService:
                 "markdown_content": content.markdown_content,
                 "geometry_scene": content.geometry_scene,
                 "geometry_caption": content.geometry_caption,
-                "geometry_position": geometry_payload.get("geometry_position", ""),
+                "geometry_position": geometry_position,
                 "plot_spec": content.plot_spec,
                 "plot_image_path": content.plot_image_path,
                 "plot_caption": content.plot_caption,
@@ -1161,10 +1185,10 @@ class MathRenderService:
             },
         )
         target_path = self.temp_dir / f"solution_{render_key}.png"
-        if self._bool("enable_cache", True) and target_path.exists():
-            target_path.touch()
+        if self._cached_file(target_path):
             return target_path
 
+        geometry_payload = await self._prepare_geometry_payload_async(content)
         free_layout_markdown = self._build_solution_markdown(content)
         payload = self._theme_context(theme)
         payload.update(self._render_settings_context())
@@ -1187,6 +1211,21 @@ class MathRenderService:
         payload.update(self._prepare_plot_payload(content, geometry_payload))
         return await self._render_to_png(SOLUTION_CARD_TEMPLATE, payload, target_path)
 
+    def _get_geometry_lock(self) -> asyncio.Lock:
+        if self._geometry_lock is None:
+            self._geometry_lock = asyncio.Lock()
+        return self._geometry_lock
+
+    async def _prepare_geometry_payload_async(self, content: SolutionCardContent) -> dict[str, Any]:
+        """Keep synchronous Matplotlib geometry work off AstrBot's event loop."""
+
+        if not content.geometry_scene:
+            return self._empty_geometry_payload(content)
+        if not self._bool("geometry_render_enabled", True) or not self._bool("geometry_section_enabled", True):
+            return self._empty_geometry_payload(content)
+        async with self._get_geometry_lock():
+            return await asyncio.to_thread(self._prepare_geometry_payload, content)
+
     def _prepare_geometry_payload(self, content: SolutionCardContent) -> dict[str, Any]:
         empty_payload = self._empty_geometry_payload(content)
         if not self._bool("geometry_render_enabled", True):
@@ -1199,17 +1238,22 @@ class MathRenderService:
             return empty_payload
 
         try:
-            parsed_scene = self._geometry_renderer.parse_scene(scene)
-            scene_description = self._geometry_renderer.describe_scene(parsed_scene)
+            geometry_renderer = self._get_geometry_renderer()
+            parsed_scene = geometry_renderer.parse_scene(scene)
+            scene_description = geometry_renderer.describe_scene(parsed_scene)
             self._debug("geometry scene parsed: %s", scene_description)
 
-            if self._bool("geometry_skip_blank_scene_enabled", True) and not self._geometry_renderer.has_drawable_content(
+            if self._bool("geometry_skip_blank_scene_enabled", True) and not geometry_renderer.has_drawable_content(
                 parsed_scene
             ):
                 self._debug("geometry scene skipped because it has no drawable content: %s", scene_description)
                 return empty_payload
 
-            geometry_result = self._render_geometry_scene_with_fallback(parsed_scene, scene_description)
+            geometry_result = self._render_geometry_scene_with_fallback(
+                parsed_scene,
+                scene_description,
+                geometry_renderer,
+            )
             if geometry_result is None:
                 return empty_payload
 
@@ -1275,8 +1319,10 @@ class MathRenderService:
         self,
         scene: dict[str, Any],
         scene_description: str,
+        geometry_renderer: Any | None = None,
     ) -> Any | None:
-        geometry_result = self._geometry_renderer.render_scene(scene)
+        renderer = geometry_renderer or self._get_geometry_renderer()
+        geometry_result = renderer.render_scene(scene)
         if self._geometry_image_has_visible_content(geometry_result.path):
             return geometry_result
 
@@ -1284,7 +1330,7 @@ class MathRenderService:
             self._debug("geometry image appears blank; retrying without viewport: %s", scene_description)
             fallback_scene = json.loads(json.dumps(scene, ensure_ascii=False))
             fallback_scene["viewport"] = {}
-            geometry_result = self._geometry_renderer.render_scene(fallback_scene)
+            geometry_result = renderer.render_scene(fallback_scene)
             if self._geometry_image_has_visible_content(geometry_result.path):
                 return geometry_result
 
@@ -1418,6 +1464,12 @@ class MathRenderService:
         self._debug("before_render complete renderer_ready=%s", self._renderer_ready)
 
     async def _render_to_png(self, template: str, payload: dict[str, Any], target_path: Path) -> Path:
+        """Serialize browser screenshots to cap peak Chromium memory use."""
+
+        async with self._render_lock:
+            return await self._render_to_png_locked(template, payload, target_path)
+
+    async def _render_to_png_locked(self, template: str, payload: dict[str, Any], target_path: Path) -> Path:
         backend = self._text("render_backend", "auto").lower()
         if backend not in {"auto", "local", "remote"}:
             backend = "auto"
@@ -1702,8 +1754,91 @@ class MathRenderService:
             return False
 
     def _make_cache_key(self, prefix: str, payload: dict[str, Any]) -> str:
-        raw = json.dumps({"prefix": prefix, "payload": payload}, ensure_ascii=False, sort_keys=True)
+        raw = json.dumps(
+            {
+                "version": RENDER_CACHE_VERSION,
+                "prefix": prefix,
+                "config": self._render_cache_config_signature(),
+                "payload": payload,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            default=str,
+        )
         return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
+
+    def _cached_file(self, path: Path) -> bool:
+        if not self._bool("enable_cache", True) or not path.is_file():
+            return False
+        try:
+            if path.stat().st_size > 0:
+                path.touch()
+                return True
+            path.unlink(missing_ok=True)
+        except OSError as exc:
+            self._debug("render cache validation failed path=%s error=%s", path, exc)
+        return False
+
+    def _render_cache_config_signature(self) -> tuple[tuple[str, Any], ...]:
+        keys = (
+            "render_backend",
+            "local_browser_executable",
+            "render_timeout_ms",
+            "render_wait_until",
+            "viewport_width",
+            "viewport_height",
+            "device_scale_factor",
+            "render_dpi_scale",
+            "mathjax_cdn_url",
+            "render_page_background_css",
+            "render_card_background_css",
+            "render_text_color",
+            "render_muted_text_color",
+            "title_font_size_px",
+            "subtitle_font_size_px",
+            "body_font_size_px",
+            "body_line_height",
+            "formula_font_scale",
+            "page_padding_px",
+            "card_radius_px",
+            "section_radius_px",
+            "section_gap_px",
+            "content_max_width_px",
+            "geometry_render_enabled",
+            "geometry_section_enabled",
+            "geometry_section_position",
+            "geometry_position_mode",
+            "geometry_section_label",
+            "geometry_caption_enabled",
+            "geometry_figure_width_in",
+            "geometry_figure_height_in",
+            "geometry_dpi",
+            "geometry_padding_ratio",
+            "geometry_min_span",
+            "geometry_line_width",
+            "geometry_point_size",
+            "geometry_label_font_size",
+            "geometry_annotation_font_size",
+            "geometry_font_family",
+            "geometry_background_color",
+            "geometry_transparent_background",
+            "geometry_primary_color",
+            "geometry_auxiliary_color",
+            "geometry_highlight_color",
+            "geometry_subtle_color",
+            "geometry_fill_color",
+            "geometry_fill_alpha",
+            "geometry_point_color",
+            "geometry_text_color",
+            "geometry_circle_color",
+            "geometry_angle_color",
+            "geometry_default_angle_radius",
+            "geometry_angle_radius_step",
+            "plot_section_label",
+            "plot_section_position",
+            "plot_caption_enabled",
+        )
+        return tuple((key, get_config_value(self._config, key, None)) for key in keys)
 
     def _image_to_data_uri(self, path: Path) -> str:
         encoded = base64.b64encode(path.read_bytes()).decode("ascii")

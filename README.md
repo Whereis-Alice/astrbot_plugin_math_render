@@ -2,12 +2,16 @@
 
 面向 AstrBot 的数学出图插件。它把公式、解题过程、几何辅助图和函数图像整理成清晰的图片卡片，适合 QQ/OneBot 这类不方便直接展示 LaTeX 的聊天场景。
 
+![AstrBot Math Render logo](logo.png)
+
 ## 能做什么
 
 - 渲染单个 LaTeX 公式或普通数学表达式。
 - 把数学题解答整理成可转发、可保存的图片卡片。
 - 几何题自动生成示意图，并嵌入同一张解题图卡。
 - 函数、曲线、隐式方程、极坐标、参数曲线、三维曲面和向量场绘图；三维参数曲线会按参数 `t` 渐变上色。
+- 绘图与几何渲染依赖按需加载，绘图在后台线程执行，不阻塞 AstrBot 主事件循环。
+- 对表达式长度、运算量、采样点、网格密度和缓存大小设有安全上限，避免异常输入造成资源占用失控。
 - 识图数学题时提醒 LLM 优先调用出图工具。
 - 出图失败时保留文字答案，并在日志里记录原因，方便排查。
 
@@ -72,6 +76,7 @@
 | `/vector2d <Fx(x,y)>, <Fy(x,y)>` | 二维向量场 | `/vector2d -y, x` |
 | `/vector3d <向量定义>` | 三维空间向量 | `/vector3d 1,2,3:red:v1 ; 0,0,0->3,4,1:blue:v2` |
 | `/plotstatus` | 查看绘图缓存和默认设置 | `/plotstatus` |
+| `/plotclearcache` | 只清理绘图 PNG 缓存 | `/plotclearcache` |
 
 三维向量定义格式：
 
@@ -87,6 +92,8 @@ x1,y1,z1->x2,y2,z2:颜色:标签
 ```text
 /mathimgcleanup
 ```
+
+`/mathimgcleanup` 会清理插件临时目录中的过期或全部渲染文件；如果只想删除函数图像、保留公式和解题卡，请使用 `/plotclearcache`。
 
 ## LLM 主动调用
 
@@ -228,6 +235,8 @@ x1,y1,z1->x2,y2,z2:颜色:标签
 
 旧版扁平配置 key 会作为隐藏兼容项保留，升级后不会因为分组而直接丢掉旧自定义值。
 
+绘图模块中的 `plot_cache_max_files`（默认 40）和 `plot_cache_max_bytes`（默认 64 MiB）控制磁盘缓存；`plot_max_expression_length`、`plot_max_expression_ops`、`plot_max_power` 与 `plot_max_range_span` 用于限制单次请求的复杂度。首次使用绘图或几何功能时才会加载 Matplotlib/SymPy；`prewarm_renderer=false` 时 HTML 渲染器也不会在插件启动阶段预热。
+
 ## 图片发送排障
 
 如果日志显示已经生成 PNG，但聊天里没看到图片，优先打开：
@@ -270,6 +279,10 @@ AstrBot/data/plugins/astrbot_plugin_math_render/temp
 
 相关配置在 `渲染引擎与临时文件` 模块里。
 
+## 插件图标
+
+仓库根目录中的 `logo.png` 是 AstrBot Dashboard 识别的插件图标（512×512 PNG），`logo.svg` 为可编辑源文件。请不要只把图标放在 `assets/` 子目录，否则部分 AstrBot 版本不会显示。
+
 ## 依赖
 
 ```text
@@ -278,6 +291,8 @@ sympy>=1.13
 markdown>=3.6
 matplotlib>=3.8
 numpy>=1.24
+Pillow>=10.0
+Jinja2>=3.1
 ```
 
 说明：
@@ -287,6 +302,10 @@ numpy>=1.24
 - `markdown`：Markdown 转 HTML。
 - `matplotlib`：几何图和函数图像绘制。
 - `numpy`：函数采样、曲面网格和向量场计算。
+- `Pillow`：图片检查、持久化与发送前压缩。
+- `Jinja2`：本地浏览器渲染时生成 HTML。
+
+绘图重型依赖不会在仅使用公式渲染时主动导入；如果部署环境只使用公式/解题卡，也可以继续保留依赖以便随时启用绘图功能。
 
 ## 参考项目
 
@@ -306,7 +325,13 @@ numpy>=1.24
 build_math_render_upload_zip.py
 ```
 
-生成的 zip 会以插件文件作为根目录，适合直接在 AstrBot WebUI 上传安装。
+在仓库根目录执行：
+
+```text
+python build_math_render_upload_zip.py
+```
+
+生成的 zip 会以插件文件作为根目录（默认写入 `dist/astrbot_plugin_math_render_v0.5.0.zip`），适合直接在 AstrBot WebUI 上传安装；测试、缓存和运行时数据不会被打包。
 
 ## 调试建议
 

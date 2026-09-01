@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import asyncio
 import base64
+import importlib
 import json
 import re
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
@@ -22,8 +24,47 @@ from .conversion import (
     normalize_latex_output,
 )
 from .rendering import DEFAULT_STYLE, MathRenderService, PLUGIN_NAME, SolutionCardContent
-from .plotting import MathPlotService, PlotResult
 from .solving import SOLVER_SYSTEM_PROMPT, build_solver_prompt, parse_solver_response
+
+if TYPE_CHECKING:
+    from .plotting import PlotResult
+
+
+class _LazyPlotter:
+    """Load the plotting stack only when a plot is actually requested.
+
+    Matplotlib, NumPy and SymPy are intentionally not imported from the plugin
+    entrypoint.  This keeps ordinary AstrBot conversations lightweight while
+    preserving the existing ``plugin.plotter`` API for commands and tests.
+    """
+
+    def __init__(self, config: Any, temp_dir: Path, debug: Any) -> None:
+        self._config = config
+        self._temp_dir = Path(temp_dir)
+        self._debug = debug
+        self._service: Any | None = None
+
+    @property
+    def loaded(self) -> bool:
+        return self._service is not None
+
+    def _load(self) -> Any:
+        if self._service is None:
+            module_name = f"{__package__}.plotting" if __package__ else "plotting"
+            module = importlib.import_module(module_name)
+            self._service = module.MathPlotService(
+                self._config,
+                self._temp_dir,
+                debug=self._debug,
+            )
+        return self._service
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._load(), name)
+
+    def release(self) -> None:
+        if self._service is not None:
+            self._service.release()
 
 
 FORMULA_COMMANDS = (
@@ -48,6 +89,7 @@ PARAMETRIC_COMMANDS = ("parametric", "paramplot", "参数绘图")
 VECTOR_FIELD_COMMANDS = ("vector2d", "vectorfield", "向量场")
 VECTOR3D_COMMANDS = ("vector3d", "三维向量", "空间向量")
 PARAMETRIC3D_COMMANDS = ("parametric3d", "param3d", "三维参数曲线")
+PLOT_CLEAR_CACHE_COMMANDS = ("plotclearcache", "plotcacheclear", "绘图缓存清理")
 
 MATH_SIGNAL_PATTERNS = (
     r"\\(?:frac|sqrt|sum|int|lim|begin|alpha|beta|gamma|theta|pi)\b",
@@ -289,12 +331,48 @@ class MathRenderPlugin(Star):
         super().__init__(context)
         self.config = config or AstrBotConfig()
         self.renderer = MathRenderService(self, self.config, plugin_name=PLUGIN_NAME)
-        self.plotter = MathPlotService(self.config, self.renderer.temp_dir, debug=self._debug)
+        self.plotter = _LazyPlotter(self.config, self.renderer.temp_dir, debug=self._debug)
+        self._plot_lock: asyncio.Lock | None = None
 
     async def initialize(self) -> None:
         await self.renderer.prepare()
         logger.info("math_render plugin initialized. temp_dir=%s", self.renderer.temp_dir)
         self._debug("initialized with temp_dir=%s", self.renderer.temp_dir)
+
+    async def terminate(self) -> None:
+        """Release plotting figures and cancel plugin-owned rendering state."""
+
+        release = getattr(getattr(self, "plotter", None), "release", None)
+        if callable(release):
+            release()
+        self._plot_lock = None
+        debug = getattr(self, "_debug", None)
+        if callable(debug):
+            debug("math_render plugin terminated")
+
+    def _get_plot_lock(self) -> asyncio.Lock:
+        # AstrBot runs a plugin on one event loop.  Creating this lazily keeps
+        # unit tests and plugin construction outside an active loop harmless.
+        if self._plot_lock is None:
+            self._plot_lock = asyncio.Lock()
+        return self._plot_lock
+
+    async def _run_plotter(self, method: str, *args: Any, **kwargs: Any) -> Any:
+        """Run a synchronous Matplotlib operation off the event loop.
+
+        Matplotlib's pyplot state is process-global and is not reliably
+        thread-safe, so plotting is serialized while still allowing AstrBot
+        to process unrelated messages during a render.
+        """
+
+        async with self._get_plot_lock():
+            plotter = self.plotter
+            operation = getattr(plotter, method)
+            return await asyncio.to_thread(operation, *args, **kwargs)
+
+    async def _run_plot_spec(self, spec: dict[str, Any]) -> Any:
+        async with self._get_plot_lock():
+            return await asyncio.to_thread(self._render_plot_spec, spec)
 
     @filter.on_llm_request()
     async def inject_auto_render_prompt(self, event: AstrMessageEvent, req: ProviderRequest) -> None:
@@ -388,7 +466,7 @@ class MathRenderPlugin(Star):
 
         yield self._image_result_for_send(event, image_path)
 
-    @filter.command("mathsolveimg", alias=["解答渲染", "数学出图", "题目出图"])
+    @filter.command(SOLVE_COMMANDS[0], alias=list(SOLVE_COMMANDS[1:]))
     async def mathsolveimg(self, event: AstrMessageEvent):
         question = self._extract_payload(event.message_str, SOLVE_COMMANDS)
         if not question:
@@ -410,7 +488,7 @@ class MathRenderPlugin(Star):
 
         yield self._image_result_for_send(event, image_path)
 
-    @filter.command("plot", alias=["mathplot", "functionplot"])
+    @filter.command(PLOT_COMMANDS[0], alias=list(PLOT_COMMANDS[1:]))
     async def plot(self, event: AstrMessageEvent):
         payload = self._extract_payload(event.message_str, PLOT_COMMANDS)
         if not payload:
@@ -422,121 +500,133 @@ class MathRenderPlugin(Star):
             )
             return
         try:
-            parts = self.plotter.split_expressions(payload)
+            parts = self._split_expressions(payload)
             if len(parts) >= 2:
-                result = self.plotter.plot_multiple(payload)
+                payload = self._normalize_expression_list(payload, allowed_lhs=("y", "f(x)"))
+                result = await self._run_plotter("plot_multiple", payload)
             elif self._looks_like_implicit_plot(payload):
-                result = self.plotter.plot_implicit(payload)
+                result = await self._run_plotter("plot_implicit", payload)
             else:
-                result = self.plotter.plot_function(payload)
+                result = await self._run_plotter(
+                    "plot_function",
+                    self._strip_equation_lhs(payload, allowed_lhs=("y", "f(x)")),
+                )
         except Exception as exc:
             logger.exception("plot command failed")
             yield event.plain_result(f"绘图失败: {exc}")
             return
         yield self._image_result_for_send(event, result.path)
 
-    @filter.command("plot3d", alias=["surfaceplot"])
+    @filter.command(PLOT3D_COMMANDS[0], alias=list(PLOT3D_COMMANDS[1:]))
     async def plot3d(self, event: AstrMessageEvent):
         payload = self._extract_payload(event.message_str, PLOT3D_COMMANDS)
         if not payload:
             yield event.plain_result("用法: /plot3d <z=f(x,y)>，例如: /plot3d sin(sqrt(x^2+y^2))")
             return
         try:
-            result = self.plotter.plot_surface(payload)
+            expression = self._strip_equation_lhs(payload, allowed_lhs=("z", "z(x,y)", "f(x,y)"))
+            result = await self._run_plotter("plot_surface", expression)
         except Exception as exc:
             logger.exception("plot3d command failed")
             yield event.plain_result(f"三维绘图失败: {exc}")
             return
         yield self._image_result_for_send(event, result.path)
 
-    @filter.command("plot3dm", alias=["plot3dmultiple", "多曲面绘图", "三维多曲面"])
+    @filter.command(PLOT3D_MULTIPLE_COMMANDS[0], alias=list(PLOT3D_MULTIPLE_COMMANDS[1:]))
     async def plot3dm(self, event: AstrMessageEvent):
         payload = self._extract_payload(event.message_str, PLOT3D_MULTIPLE_COMMANDS)
-        parts = self.plotter.split_expressions(payload)
+        parts = self._split_expressions(payload)
         if len(parts) < 2:
             yield event.plain_result("用法: /plot3dm <表达式1>, <表达式2>，例如: /plot3dm x^2+y^2, sqrt(x^2+y^2)")
             return
         try:
-            result = self.plotter.plot_multiple_surfaces(payload)
+            payload = self._normalize_expression_list(payload, allowed_lhs=("z", "z(x,y)", "f(x,y)"))
+            result = await self._run_plotter("plot_multiple_surfaces", payload)
         except Exception as exc:
             logger.exception("plot3dm command failed")
             yield event.plain_result(f"多曲面绘图失败: {exc}")
             return
         yield self._image_result_for_send(event, result.path)
 
-    @filter.command("spherical", alias=["spherical3d", "球坐标绘图", "球坐标曲面"])
+    @filter.command(SPHERICAL3D_COMMANDS[0], alias=list(SPHERICAL3D_COMMANDS[1:]))
     async def spherical3d(self, event: AstrMessageEvent):
         payload = self._extract_payload(event.message_str, SPHERICAL3D_COMMANDS)
         if not payload:
             yield event.plain_result("用法: /spherical <r=f(theta,phi)>，例如: /spherical 1+0.3*sin(4*theta)*cos(3*phi)")
             return
         try:
-            result = self.plotter.plot_spherical_3d(payload)
+            expression = self._strip_equation_lhs(payload, allowed_lhs=("r", "r(theta,phi)", "r(θ,φ)"))
+            result = await self._run_plotter("plot_spherical_3d", expression)
         except Exception as exc:
             logger.exception("spherical command failed")
             yield event.plain_result(f"球坐标曲面绘图失败: {exc}")
             return
         yield self._image_result_for_send(event, result.path)
 
-    @filter.command("implicit3d", alias=["implicit3D", "三维隐式", "隐式曲面"])
+    @filter.command(IMPLICIT3D_COMMANDS[0], alias=list(IMPLICIT3D_COMMANDS[1:]))
     async def implicit3d(self, event: AstrMessageEvent):
         payload = self._extract_payload(event.message_str, IMPLICIT3D_COMMANDS)
         if not payload:
             yield event.plain_result("用法: /implicit3d <F(x,y,z)=0>，例如: /implicit3d x^2+y^2+z^2=1")
             return
         try:
-            result = self.plotter.plot_implicit_3d(payload)
+            result = await self._run_plotter("plot_implicit_3d", payload)
         except Exception as exc:
             logger.exception("implicit3d command failed")
             yield event.plain_result(f"隐式三维曲面绘图失败: {exc}")
             return
         yield self._image_result_for_send(event, result.path)
 
-    @filter.command("polar", alias=["polarplot"])
+    @filter.command(POLAR_COMMANDS[0], alias=list(POLAR_COMMANDS[1:]))
     async def polar(self, event: AstrMessageEvent):
         payload = self._extract_payload(event.message_str, POLAR_COMMANDS)
         if not payload:
             yield event.plain_result("用法: /polar <r=f(theta)>，例如: /polar sin(3*theta)")
             return
         try:
-            result = self.plotter.plot_polar(payload)
+            result = await self._run_plotter(
+                "plot_polar",
+                self._strip_equation_lhs(payload, allowed_lhs=("r", "r(theta)", "r(θ)")),
+            )
         except Exception as exc:
             logger.exception("polar command failed")
             yield event.plain_result(f"极坐标绘图失败: {exc}")
             return
         yield self._image_result_for_send(event, result.path)
 
-    @filter.command("parametric", alias=["paramplot"])
+    @filter.command(PARAMETRIC_COMMANDS[0], alias=list(PARAMETRIC_COMMANDS[1:]))
     async def parametric(self, event: AstrMessageEvent):
         payload = self._extract_payload(event.message_str, PARAMETRIC_COMMANDS)
-        parts = self.plotter.split_expressions(payload)
+        parts = self._split_expressions(payload)
         if len(parts) != 2:
             yield event.plain_result("用法: /parametric <x(t)>, <y(t)>，例如: /parametric cos(t), sin(t)")
             return
         try:
-            result = self.plotter.plot_parametric(parts[0], parts[1])
+            x_expression = self._strip_equation_lhs(parts[0], allowed_lhs=("x", "x(t)"))
+            y_expression = self._strip_equation_lhs(parts[1], allowed_lhs=("y", "y(t)"))
+            result = await self._run_plotter("plot_parametric", x_expression, y_expression)
         except Exception as exc:
             logger.exception("parametric command failed")
             yield event.plain_result(f"参数曲线绘图失败: {exc}")
             return
         yield self._image_result_for_send(event, result.path)
 
-    @filter.command("vector2d", alias=["vectorfield"])
+    @filter.command(VECTOR_FIELD_COMMANDS[0], alias=list(VECTOR_FIELD_COMMANDS[1:]))
     async def vector2d(self, event: AstrMessageEvent):
         payload = self._extract_payload(event.message_str, VECTOR_FIELD_COMMANDS)
-        parts = self.plotter.split_expressions(payload)
+        parts = self._split_expressions(payload)
         if len(parts) != 2:
             yield event.plain_result("用法: /vector2d <Fx(x,y)>, <Fy(x,y)>，例如: /vector2d -y, x")
             return
         try:
-            result = self.plotter.plot_vector_field_2d(parts[0], parts[1])
+            result = await self._run_plotter("plot_vector_field_2d", parts[0], parts[1])
         except Exception as exc:
             logger.exception("vector2d command failed")
             yield event.plain_result(f"向量场绘图失败: {exc}")
             return
         yield self._image_result_for_send(event, result.path)
 
-    @filter.command("vector3d", alias=["三维向量", "空间向量"])
+    @filter.command(VECTOR3D_COMMANDS[0], alias=list(VECTOR3D_COMMANDS[1:]))
     async def vector3d(self, event: AstrMessageEvent):
         payload = self._extract_payload(event.message_str, VECTOR3D_COMMANDS)
         if not payload:
@@ -546,24 +636,29 @@ class MathRenderPlugin(Star):
             )
             return
         try:
-            result = self.plotter.plot_vectors_3d(payload)
+            result = await self._run_plotter("plot_vectors_3d", payload)
         except Exception as exc:
             logger.exception("vector3d command failed")
             yield event.plain_result(f"三维向量绘图失败: {exc}")
             return
         yield self._image_result_for_send(event, result.path)
 
-    @filter.command("parametric3d", alias=["param3d"])
+    @filter.command(PARAMETRIC3D_COMMANDS[0], alias=list(PARAMETRIC3D_COMMANDS[1:]))
     async def parametric3d(self, event: AstrMessageEvent):
         payload = self._extract_payload(event.message_str, PARAMETRIC3D_COMMANDS)
-        parts = self.plotter.split_expressions(payload)
+        parts = self._split_expressions(payload)
         if len(parts) != 3:
             yield event.plain_result(
                 "用法: /parametric3d <x(t)>, <y(t)>, <z(t)>，例如: /parametric3d cos(t), sin(t), t/5"
             )
             return
         try:
-            result = self.plotter.plot_parametric_3d(parts[0], parts[1], parts[2])
+            result = await self._run_plotter(
+                "plot_parametric_3d",
+                self._strip_equation_lhs(parts[0], allowed_lhs=("x", "x(t)")),
+                self._strip_equation_lhs(parts[1], allowed_lhs=("y", "y(t)")),
+                self._strip_equation_lhs(parts[2], allowed_lhs=("z", "z(t)")),
+            )
         except Exception as exc:
             logger.exception("parametric3d command failed")
             yield event.plain_result(f"三维参数曲线绘图失败: {exc}")
@@ -572,13 +667,21 @@ class MathRenderPlugin(Star):
 
     @filter.command("plotstatus")
     async def plotstatus(self, event: AstrMessageEvent):
-        yield event.plain_result(self.plotter.status_text())
+        yield event.plain_result(self._plot_status_text())
 
-    @filter.command("mathimgcleanup", alias=["渲染清理", "公式清理"])
+    @filter.command(CLEANUP_COMMANDS[0], alias=list(CLEANUP_COMMANDS[1:]))
     async def mathimgcleanup(self, event: AstrMessageEvent):
         removed = await self.renderer.cleanup_temp_files(purge_all=True)
         self._debug("manual cleanup removed=%s", removed)
         yield event.plain_result(f"已清理 {removed} 个渲染临时文件。")
+
+    @filter.command(PLOT_CLEAR_CACHE_COMMANDS[0], alias=list(PLOT_CLEAR_CACHE_COMMANDS[1:]))
+    async def plotclearcache(self, event: AstrMessageEvent):
+        """Clear only plot cache files, leaving formula and solution cards intact."""
+
+        removed = await asyncio.to_thread(self._clear_plot_cache)
+        self._debug("plot cache cleared removed=%s", removed)
+        yield event.plain_result(f"已清理 {removed} 个绘图缓存文件。")
 
     @filter.llm_tool(name="render_latex_formula")
     async def render_latex_formula_tool(
@@ -719,7 +822,9 @@ class MathRenderPlugin(Star):
             ylabel(string): Optional y-axis label.
         """
         try:
-            result = self.plotter.plot_function(
+            expression = self._strip_equation_lhs(expression, allowed_lhs=("y", "f(x)"))
+            result = await self._run_plotter(
+                "plot_function",
                 expression,
                 x_range=x_range,
                 title=title,
@@ -756,7 +861,9 @@ class MathRenderPlugin(Star):
             ylabel(string): Optional y-axis label.
         """
         try:
-            result = self.plotter.plot_multiple(
+            expressions = self._normalize_expression_list(expressions, allowed_lhs=("y", "f(x)"))
+            result = await self._run_plotter(
+                "plot_multiple",
                 expressions,
                 x_range=x_range,
                 title=title,
@@ -795,7 +902,8 @@ class MathRenderPlugin(Star):
             ylabel(string): Optional y-axis label.
         """
         try:
-            result = self.plotter.plot_implicit(
+            result = await self._run_plotter(
+                "plot_implicit",
                 equation,
                 x_range=x_range,
                 y_range=y_range,
@@ -829,7 +937,8 @@ class MathRenderPlugin(Star):
             title(string): Optional plot title.
         """
         try:
-            result = self.plotter.plot_polar(expression, theta_range=theta_range, title=title)
+            expression = self._strip_equation_lhs(expression, allowed_lhs=("r", "r(theta)", "r(θ)"))
+            result = await self._run_plotter("plot_polar", expression, theta_range=theta_range, title=title)
         except Exception as exc:
             logger.exception("plot_polar tool failed")
             yield f"Plot failed: {exc}"
@@ -862,7 +971,10 @@ class MathRenderPlugin(Star):
             ylabel(string): Optional y-axis label.
         """
         try:
-            result = self.plotter.plot_parametric(
+            x_expression = self._strip_equation_lhs(x_expression, allowed_lhs=("x", "x(t)"))
+            y_expression = self._strip_equation_lhs(y_expression, allowed_lhs=("y", "y(t)"))
+            result = await self._run_plotter(
+                "plot_parametric",
                 x_expression,
                 y_expression,
                 t_range=t_range,
@@ -911,7 +1023,8 @@ class MathRenderPlugin(Star):
             parametric_parts = self._parse_3d_parametric_equations(expression)
             if parametric_parts:
                 self._debug("rerouting plot_3d_function parametric payload to plot_3d_parametric expression=%r", expression)
-                result = self.plotter.plot_parametric_3d(
+                result = await self._run_plotter(
+                    "plot_parametric_3d",
                     parametric_parts["x"],
                     parametric_parts["y"],
                     parametric_parts["z"],
@@ -921,7 +1034,12 @@ class MathRenderPlugin(Star):
                     zlabel=zlabel,
                 )
             else:
-                result = self.plotter.plot_surface(
+                expression = self._strip_equation_lhs(
+                    expression,
+                    allowed_lhs=("z", "z(x,y)", "f(x,y)"),
+                )
+                result = await self._run_plotter(
+                    "plot_surface",
                     expression,
                     x_range=x_range,
                     y_range=y_range,
@@ -964,7 +1082,9 @@ class MathRenderPlugin(Star):
             zlabel(string): Optional z-axis label.
         """
         try:
-            result = self.plotter.plot_multiple_surfaces(
+            expressions = self._normalize_expression_list(expressions, allowed_lhs=("z", "z(x,y)", "f(x,y)"))
+            result = await self._run_plotter(
+                "plot_multiple_surfaces",
                 expressions,
                 x_range=x_range,
                 y_range=y_range,
@@ -1007,7 +1127,9 @@ class MathRenderPlugin(Star):
             zlabel(string): Optional z-axis label.
         """
         try:
-            result = self.plotter.plot_spherical_3d(
+            expression = self._strip_equation_lhs(expression, allowed_lhs=("r", "r(theta,phi)", "r(θ,φ)"))
+            result = await self._run_plotter(
+                "plot_spherical_3d",
                 expression,
                 theta_range=theta_range,
                 phi_range=phi_range,
@@ -1052,7 +1174,8 @@ class MathRenderPlugin(Star):
             zlabel(string): Optional z-axis label.
         """
         try:
-            result = self.plotter.plot_implicit_3d(
+            result = await self._run_plotter(
+                "plot_implicit_3d",
                 equation,
                 x_range=x_range,
                 y_range=y_range,
@@ -1098,7 +1221,11 @@ class MathRenderPlugin(Star):
             zlabel(string): Optional z-axis label.
         """
         try:
-            result = self.plotter.plot_parametric_3d(
+            x_expression = self._strip_equation_lhs(x_expression, allowed_lhs=("x", "x(t)"))
+            y_expression = self._strip_equation_lhs(y_expression, allowed_lhs=("y", "y(t)"))
+            z_expression = self._strip_equation_lhs(z_expression, allowed_lhs=("z", "z(t)"))
+            result = await self._run_plotter(
+                "plot_parametric_3d",
                 x_expression,
                 y_expression,
                 z_expression,
@@ -1138,7 +1265,8 @@ class MathRenderPlugin(Star):
             zlabel(string): Optional z-axis label.
         """
         try:
-            result = self.plotter.plot_vectors_3d(
+            result = await self._run_plotter(
+                "plot_vectors_3d",
                 vectors,
                 title=title,
                 xlabel=xlabel,
@@ -1179,7 +1307,8 @@ class MathRenderPlugin(Star):
             ylabel(string): Optional y-axis label.
         """
         try:
-            result = self.plotter.plot_vector_field_2d(
+            result = await self._run_plotter(
+                "plot_vector_field_2d",
                 x_expression,
                 y_expression,
                 x_range=x_range,
@@ -1670,6 +1799,14 @@ class MathRenderPlugin(Star):
         if not candidate:
             return False
         if "=" in candidate:
+            lhs, rhs = candidate.split("=", 1)
+            normalized_lhs = re.sub(r"\s+", "", lhs).lower()
+            if normalized_lhs in {"y", "f(x)"} and not re.search(
+                r"(?<![A-Za-z])y(?![A-Za-z])",
+                rhs,
+                re.IGNORECASE,
+            ):
+                return False
             return True
         return bool(re.search(r"(?<![A-Za-z])y(?![A-Za-z])", candidate))
 
@@ -1741,7 +1878,7 @@ class MathRenderPlugin(Star):
             return content
 
         try:
-            result = self._render_plot_spec(content.plot_spec)
+            result = await self._run_plot_spec(content.plot_spec)
         except Exception as exc:
             logger.exception("math_render solution-card plot render failed spec=%s", content.plot_spec)
             self._debug("solution-card plot render failed: %s", exc)
@@ -1986,7 +2123,7 @@ class MathRenderPlugin(Star):
             return None
 
         parts: dict[str, str] = {}
-        for piece in re.split(r"[,;，；\n]+", candidate):
+        for piece in self._split_expressions(candidate, separators=(",", ";", "，", "；", "\n")):
             match = re.match(r"^\s*([xyz])\s*(?:\([^)]*\))?\s*=\s*(.+?)\s*$", piece, re.IGNORECASE)
             if not match:
                 continue
@@ -2000,6 +2137,67 @@ class MathRenderPlugin(Star):
         ):
             return parts
         return None
+
+    def _split_expressions(
+        self,
+        text: str,
+        *,
+        separators: tuple[str, ...] = (",", ";", "；", "\n"),
+    ) -> list[str]:
+        """Split expression lists without breaking nested function arguments."""
+
+        items: list[str] = []
+        current: list[str] = []
+        depth = 0
+        separator_set = set(separators)
+        for char in (text or "").replace("，", ","):
+            if char in "([{":
+                depth += 1
+            elif char in ")]}":
+                depth = max(depth - 1, 0)
+            if char in separator_set and depth == 0:
+                item = "".join(current).strip()
+                if item:
+                    items.append(item)
+                current = []
+                continue
+            current.append(char)
+        item = "".join(current).strip()
+        if item:
+            items.append(item)
+        return items
+
+    def _normalize_expression_list(self, text: str, *, allowed_lhs: tuple[str, ...]) -> str:
+        """Normalize comma/semicolon-separated labelled expressions."""
+
+        parts = self._split_expressions(text)
+        normalized = [self._strip_equation_lhs(part, allowed_lhs=allowed_lhs) for part in parts]
+        return ", ".join(part for part in normalized if part.strip())
+
+    def _plot_status_text(self) -> str:
+        files = sorted(self.renderer.temp_dir.glob("plot_*.png"))
+        total_size = sum(path.stat().st_size for path in files if path.is_file())
+        return (
+            "Math Render plotting status\n"
+            f"- plot images: {len(files)}\n"
+            f"- plot cache size: {total_size / 1024:.1f} KiB\n"
+            f"- cache limit: {self._int('plot_cache_max_files', 40)} files / "
+            f"{self._int('plot_cache_max_bytes', 67_108_864) / 1024 / 1024:.1f} MiB\n"
+            f"- dpi: {self._int('plot_dpi', 140)}\n"
+            f"- default x range: {self._text('plot_default_x_range', '-10,10')}"
+        )
+
+    def _clear_plot_cache(self) -> int:
+        removed = 0
+        for path in self.renderer.temp_dir.glob("plot_*.png"):
+            if not path.is_file():
+                continue
+            try:
+                path.unlink(missing_ok=True)
+                removed += 1
+            except OSError as exc:
+                self._debug("plot cache clear failed path=%s error=%s", path, exc)
+        return removed
 
     def _strip_equation_lhs(self, expression: str, *, allowed_lhs: tuple[str, ...]) -> str:
         text = (expression or "").strip()

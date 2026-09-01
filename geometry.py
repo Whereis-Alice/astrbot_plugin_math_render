@@ -22,63 +22,15 @@ from sympy.geometry import Segment as SymSegment
 
 try:
     from .config_utils import get_config_value
+    from .geometry_schema import SCENE_JSON_GUIDE
+    from .render_runtime import MATPLOTLIB_RENDER_LOCK
 except ImportError:  # pragma: no cover
     from config_utils import get_config_value
+    from geometry_schema import SCENE_JSON_GUIDE
+    from render_runtime import MATPLOTLIB_RENDER_LOCK
 
 
 DEFAULT_GEOMETRY_LABEL = "几何图"
-
-SCENE_JSON_GUIDE = """当题目属于几何题、解析几何、圆、三角形、相似全等、辅助线证明，或画图能显著帮助理解时，可以额外返回 `geometry_scene`。
-
-`geometry_scene` 是一个对象，不是字符串。它的坐标可以是“示意图坐标”，不要求严格按比例，只要求关系清晰、便于出图。
-
-推荐结构：
-{
-  "caption": "可选，图的说明文字",
-  "viewport": {
-    "padding": 0.16
-  },
-  "points": [
-    {"name": "A", "x": 0, "y": 0},
-    {"name": "B", "x": 6, "y": 0},
-    {"name": "O", "type": "midpoint", "points": ["A", "B"]},
-    {"name": "H", "type": "perpendicular_foot", "point": "A", "line": ["B", "C"]}
-  ],
-  "segments": [
-    {"from": "A", "to": "B", "style": "primary"},
-    {"from": "C", "to": "H", "style": "auxiliary"}
-  ],
-  "lines": [
-    {"through": ["A", "B"], "style": "auxiliary"}
-  ],
-  "rays": [
-    {"from": "A", "to": "D", "style": "highlight"}
-  ],
-  "circles": [
-    {"center": "O", "through": "A", "style": "primary", "label": "⊙O"}
-  ],
-  "polygons": [
-    {"points": ["A", "B", "C"], "style": "subtle", "fill": false}
-  ],
-  "angle_marks": [
-    {"vertex": "A", "from": "B", "to": "C", "label": "α", "style": "highlight", "radius": 0.45},
-    {"vertex": "H", "from": "C", "to": "B", "right_angle": true}
-  ],
-  "annotations": [
-    {"text": "AB = AC", "at": "A", "offset": [0.18, 0.34]}
-  ]
-}
-
-约定：
-1. `style` 可选值建议使用 `primary`、`auxiliary`、`highlight`、`subtle`。
-2. `points` 建议先声明直接坐标点，再声明依赖它们的派生点。
-3. 派生点目前最稳妥的是：
-   - `midpoint`
-   - `perpendicular_foot`
-   - `line_intersection`
-   - `circle_line_intersection`
-   - `circle_circle_intersection`
-4. 若不需要几何图，直接省略 `geometry_scene`。"""
 
 
 @dataclass(slots=True)
@@ -111,18 +63,24 @@ class GeometryRenderer:
             raise GeometrySceneError("geometry scene has no drawable elements")
         cache_key = self._make_cache_key(scene)
         target_path = self._temp_dir / f"geometry_{cache_key}.png"
-        if self._bool("enable_cache", True) and target_path.exists():
-            target_path.touch()
-            return GeometryRenderResult(
-                path=target_path,
-                data_uri=self._image_to_data_uri(target_path),
-                caption=self._scene_caption(scene),
-                scene=scene,
-            )
+        if self._bool("enable_cache", True) and target_path.is_file():
+            try:
+                if target_path.stat().st_size > 0:
+                    target_path.touch()
+                    return GeometryRenderResult(
+                        path=target_path,
+                        data_uri=self._image_to_data_uri(target_path),
+                        caption=self._scene_caption(scene),
+                        scene=scene,
+                    )
+                target_path.unlink(missing_ok=True)
+            except OSError as exc:
+                self._debug("geometry cache validation failed path=%s error=%s", target_path, exc)
 
         target_path.parent.mkdir(parents=True, exist_ok=True)
         scene_objects = self._build_scene(scene)
-        self._draw_scene(scene, scene_objects, target_path)
+        with MATPLOTLIB_RENDER_LOCK:
+            self._draw_scene(scene, scene_objects, target_path)
         return GeometryRenderResult(
             path=target_path,
             data_uri=self._image_to_data_uri(target_path),
@@ -1977,14 +1935,18 @@ class GeometryRenderer:
             self._draw_annotations(ax, scene, points)
 
             fig.tight_layout(pad=0.18)
-            fig.savefig(
-                target_path,
-                format="png",
-                dpi=dpi,
-                bbox_inches="tight",
-                transparent=transparent,
-                pad_inches=0.08,
-            )
+            try:
+                fig.savefig(
+                    target_path,
+                    format="png",
+                    dpi=dpi,
+                    bbox_inches="tight",
+                    transparent=transparent,
+                    pad_inches=0.08,
+                )
+            except Exception:
+                target_path.unlink(missing_ok=True)
+                raise
         finally:
             plt.close(fig)
 

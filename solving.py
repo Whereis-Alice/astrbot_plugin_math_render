@@ -4,7 +4,6 @@ import json
 import re
 from typing import Any
 
-from .geometry import SCENE_JSON_GUIDE
 from .rendering import DEFAULT_STYLE, SolutionCardContent
 
 
@@ -139,7 +138,13 @@ def build_solver_prompt(
         "正文中的数学公式请尽量使用 `$...$` 或 `$$...$$` 明确包裹。",
     ]
     if geometry_enabled:
-        parts.append((geometry_prompt or SCENE_JSON_GUIDE).strip())
+        if geometry_prompt:
+            geometry_guide = geometry_prompt
+        else:
+            from .geometry_schema import SCENE_JSON_GUIDE
+
+            geometry_guide = SCENE_JSON_GUIDE
+        parts.append(geometry_guide.strip())
         parts.append(
             "如果你返回 `geometry_scene`，请确保其中至少包含一个可见的点、线、圆、角标或注释，不要返回只有 caption 或 viewport 的空场景。"
             "需要时可以额外返回 `geometry_position`，可选值为 before_content、after_question、after_key_formula、before_answer、after_answer、after_steps、after_final_answer、after_content。"

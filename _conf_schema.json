@@ -202,6 +202,12 @@
         "default": 24,
         "hint": "大于 0 时自动清理超期文件；设为 0 可关闭自动清理。"
       },
+      "cleanup_interval_seconds": {
+        "type": "int",
+        "description": "自动清理最短间隔（秒）",
+        "default": 60,
+        "hint": "避免每次出图都扫描整个临时目录；手动清理仍会立即执行。"
+      },
       "cleanup_on_initialize": {
         "type": "bool",
         "description": "插件启动时自动清理过期文件",
@@ -215,8 +221,8 @@
       "prewarm_renderer": {
         "type": "bool",
         "description": "启动时预热渲染器",
-        "default": true,
-        "hint": "会在插件初始化时尝试预加载 AstrBot 的 HTML 渲染链路。"
+        "default": false,
+        "hint": "关闭后首次出图时再初始化 HTML 渲染链路，可降低插件启动时的内存和延迟压力。"
       },
       "render_timeout_ms": {
         "type": "int",
@@ -856,6 +862,124 @@
         "description": "绘图字体回退列表",
         "default": "",
         "hint": "多个字体用逗号分隔；留空时自动检测常见中文字体。"
+      },
+      "plot_figure_width_in": {
+        "type": "float",
+        "description": "二维绘图宽度（英寸）",
+        "default": 10.0
+      },
+      "plot_figure_height_in": {
+        "type": "float",
+        "description": "二维绘图高度（英寸）",
+        "default": 6.0
+      },
+      "plot_polar_figure_size_in": {
+        "type": "float",
+        "description": "极坐标绘图尺寸（英寸）",
+        "default": 8.0
+      },
+      "plot_primary_color": {
+        "type": "string",
+        "description": "默认绘图主色",
+        "default": "#2563EB"
+      },
+      "plot_palette": {
+        "type": "string",
+        "description": "多曲线配色列表",
+        "default": "",
+        "hint": "多个颜色用逗号、分号或换行分隔。"
+      },
+      "plot_parametric_color": {
+        "type": "string",
+        "description": "二维参数曲线颜色",
+        "default": "#7C3AED"
+      },
+      "plot_polar_color": {
+        "type": "string",
+        "description": "极坐标曲线颜色",
+        "default": "#DB2777"
+      },
+      "plot_max_functions": {
+        "type": "int",
+        "description": "二维多曲线最大数量",
+        "default": 6
+      },
+      "plot_max_vectors": {
+        "type": "int",
+        "description": "三维向量最大数量",
+        "default": 16,
+        "hint": "限制单次三维向量绘图的箭头数量，避免过大的图例和渲染开销。"
+      },
+      "plot_implicit_show_aux_contours": {
+        "type": "bool",
+        "description": "显示隐式曲线辅助等高线",
+        "default": true
+      },
+      "plot_3d_contour_projection": {
+        "type": "bool",
+        "description": "显示三维曲面底部等高线投影",
+        "default": true
+      },
+      "plot_3d_parametric_cmap": {
+        "type": "string",
+        "description": "三维参数曲线渐变色图",
+        "default": "plasma"
+      },
+      "plot_vector_field_cmap": {
+        "type": "string",
+        "description": "二维向量场配色方案",
+        "default": "plasma"
+      },
+      "plot_vector_field_normalize": {
+        "type": "bool",
+        "description": "归一化向量场箭头",
+        "default": true
+      },
+      "plot_vector_field_scale": {
+        "type": "float",
+        "description": "向量场箭头缩放",
+        "default": 30.0
+      },
+      "plot_vector_field_width": {
+        "type": "float",
+        "description": "向量场箭头宽度",
+        "default": 0.003
+      },
+      "plot_cache_max_files": {
+        "type": "int",
+        "description": "绘图缓存最大文件数",
+        "default": 40,
+        "hint": "超出后优先删除最旧的绘图 PNG；设为较小值可降低磁盘占用。"
+      },
+      "plot_cache_max_bytes": {
+        "type": "int",
+        "description": "绘图缓存最大字节数",
+        "default": 67108864,
+        "hint": "绘图缓存超过此大小时按最旧优先淘汰。"
+      },
+      "plot_max_expression_length": {
+        "type": "int",
+        "description": "绘图表达式最大长度",
+        "default": 1000,
+        "hint": "限制异常长输入，避免解析和渲染占用过多资源。"
+      },
+      "plot_max_expression_ops": {
+        "type": "int",
+        "description": "绘图表达式最大运算量",
+        "default": 250,
+        "hint": "限制 SymPy 表达式复杂度；复杂公式可适当调高。"
+      },
+      "plot_max_power": {
+        "type": "int",
+        "description": "绘图幂指数上限",
+        "default": 1000,
+        "hint": "防止极大幂次导致数值溢出或计算耗时。"
+      },
+      "plot_max_range_span": {
+        "type": "float",
+        "description": "绘图坐标范围跨度上限",
+        "default": 1000.0,
+        "hint": "限制一次请求覆盖的坐标跨度，避免无意义的大网格采样。"
       }
     }
   },
@@ -1276,6 +1400,13 @@
     "hint": "大于 0 时自动清理超期文件；设为 0 可关闭自动清理。",
     "invisible": true
   },
+  "cleanup_interval_seconds": {
+    "type": "int",
+    "description": "自动清理最短间隔（秒）",
+    "default": 60,
+    "hint": "避免每次出图都扫描整个临时目录；手动清理仍会立即执行。",
+    "invisible": true
+  },
   "cleanup_on_initialize": {
     "type": "bool",
     "description": "插件启动时自动清理过期文件",
@@ -1291,8 +1422,8 @@
   "prewarm_renderer": {
     "type": "bool",
     "description": "启动时预热渲染器",
-    "default": true,
-    "hint": "会在插件初始化时尝试预加载 AstrBot 的 HTML 渲染链路。",
+    "default": false,
+    "hint": "关闭后首次出图时再初始化 HTML 渲染链路，可降低插件启动时的内存和延迟压力。",
     "invisible": true
   },
   "render_timeout_ms": {
@@ -1789,6 +1920,145 @@
     "description": "绘图字体回退列表",
     "default": "",
     "hint": "多个字体用逗号分隔；留空时自动检测常见中文字体。",
+    "invisible": true
+  },
+  "plot_figure_width_in": {
+    "type": "float",
+    "description": "二维绘图宽度（英寸）",
+    "default": 10.0,
+    "invisible": true
+  },
+  "plot_figure_height_in": {
+    "type": "float",
+    "description": "二维绘图高度（英寸）",
+    "default": 6.0,
+    "invisible": true
+  },
+  "plot_polar_figure_size_in": {
+    "type": "float",
+    "description": "极坐标绘图尺寸（英寸）",
+    "default": 8.0,
+    "invisible": true
+  },
+  "plot_primary_color": {
+    "type": "string",
+    "description": "默认绘图主色",
+    "default": "#2563EB",
+    "invisible": true
+  },
+  "plot_palette": {
+    "type": "string",
+    "description": "多曲线配色列表",
+    "default": "",
+    "invisible": true
+  },
+  "plot_parametric_color": {
+    "type": "string",
+    "description": "二维参数曲线颜色",
+    "default": "#7C3AED",
+    "invisible": true
+  },
+  "plot_polar_color": {
+    "type": "string",
+    "description": "极坐标曲线颜色",
+    "default": "#DB2777",
+    "invisible": true
+  },
+  "plot_max_functions": {
+    "type": "int",
+    "description": "二维多曲线最大数量",
+    "default": 6,
+    "invisible": true
+  },
+  "plot_max_vectors": {
+    "type": "int",
+    "description": "三维向量最大数量",
+    "default": 16,
+    "hint": "限制单次三维向量绘图的箭头数量。",
+    "invisible": true
+  },
+  "plot_implicit_show_aux_contours": {
+    "type": "bool",
+    "description": "显示隐式曲线辅助等高线",
+    "default": true,
+    "invisible": true
+  },
+  "plot_3d_contour_projection": {
+    "type": "bool",
+    "description": "显示三维曲面底部等高线投影",
+    "default": true,
+    "invisible": true
+  },
+  "plot_3d_parametric_cmap": {
+    "type": "string",
+    "description": "三维参数曲线渐变色图",
+    "default": "plasma",
+    "invisible": true
+  },
+  "plot_vector_field_cmap": {
+    "type": "string",
+    "description": "二维向量场配色方案",
+    "default": "plasma",
+    "invisible": true
+  },
+  "plot_vector_field_normalize": {
+    "type": "bool",
+    "description": "归一化向量场箭头",
+    "default": true,
+    "invisible": true
+  },
+  "plot_vector_field_scale": {
+    "type": "float",
+    "description": "向量场箭头缩放",
+    "default": 30.0,
+    "invisible": true
+  },
+  "plot_vector_field_width": {
+    "type": "float",
+    "description": "向量场箭头宽度",
+    "default": 0.003,
+    "invisible": true
+  },
+  "plot_cache_max_files": {
+    "type": "int",
+    "description": "绘图缓存最大文件数",
+    "default": 40,
+    "hint": "超出后优先删除最旧的绘图 PNG。",
+    "invisible": true
+  },
+  "plot_cache_max_bytes": {
+    "type": "int",
+    "description": "绘图缓存最大字节数",
+    "default": 67108864,
+    "hint": "绘图缓存超过此大小时按最旧优先淘汰。",
+    "invisible": true
+  },
+  "plot_max_expression_length": {
+    "type": "int",
+    "description": "绘图表达式最大长度",
+    "default": 1000,
+    "hint": "限制异常长输入，避免解析和渲染占用过多资源。",
+    "invisible": true
+  },
+  "plot_max_expression_ops": {
+    "type": "int",
+    "description": "绘图表达式最大运算量",
+    "default": 250,
+    "hint": "限制 SymPy 表达式复杂度。",
+    "invisible": true
+  },
+  "plot_max_power": {
+    "type": "int",
+    "description": "绘图幂指数上限",
+    "default": 1000,
+    "hint": "防止极大幂次导致数值溢出或计算耗时。",
+    "invisible": true
+  },
+  "plot_max_range_span": {
+    "type": "float",
+    "description": "绘图坐标范围跨度上限",
+    "default": 1000.0,
+    "hint": "限制一次请求覆盖的坐标跨度。",
     "invisible": true
   }
 }

@@ -3,27 +3,105 @@ from __future__ import annotations
 import hashlib
 import math
 import re
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass
+from functools import wraps
 from pathlib import Path
-from typing import Any, Callable
-
-import matplotlib
-
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
-import numpy as np
-import sympy as sp
-from matplotlib import font_manager
-from matplotlib.colors import Normalize
-from matplotlib.patches import Patch
-from mpl_toolkits.mplot3d.art3d import Line3DCollection
-from sympy import SympifyError, lambdify, latex, symbols, sympify
+from typing import Any
 
 try:
     from .config_utils import get_config_value
+    from .render_runtime import MATPLOTLIB_RENDER_LOCK
 except ImportError:  # pragma: no cover
     from config_utils import get_config_value
+    from render_runtime import MATPLOTLIB_RENDER_LOCK
+
+
+# Heavy plotting dependencies are imported on first actual render.  Keeping
+# these names module-local preserves the existing implementation/API while
+# avoiding a several-second Matplotlib/SymPy import for formula-only use.
+matplotlib: Any | None = None
+plt: Any | None = None
+np: Any | None = None
+sp: Any | None = None
+font_manager: Any | None = None
+Normalize: Any | None = None
+Patch: Any | None = None
+Line3DCollection: Any | None = None
+lambdify: Any | None = None
+latex: Any | None = None
+symbols: Any | None = None
+sympify: Any | None = None
+
+
+_BACKEND_LOCK = threading.Lock()
+_BACKEND_READY = False
+
+
+def _close_new_figures_on_error(func: Callable[..., Any]) -> Callable[..., Any]:
+    """Close figures created by a plot operation when rendering fails.
+
+    Matplotlib keeps figures alive globally.  A validation or save error after
+    ``plt.figure`` would otherwise accumulate those objects until the process
+    exits, which is particularly costly for repeated LLM tool calls.
+    """
+
+    @wraps(func)
+    def wrapped(self: Any, *args: Any, **kwargs: Any) -> Any:
+        with MATPLOTLIB_RENDER_LOCK:
+            before: set[int] = set()
+            if _BACKEND_READY and plt is not None:
+                before = set(plt.get_fignums())
+            try:
+                return func(self, *args, **kwargs)
+            except Exception:
+                if _BACKEND_READY and plt is not None:
+                    for number in set(plt.get_fignums()) - before:
+                        plt.close(number)
+                raise
+
+    return wrapped
+
+
+def _ensure_backend() -> None:
+    """Load Matplotlib/NumPy/SymPy exactly once, on demand."""
+
+    global _BACKEND_READY, matplotlib, plt, np, sp, font_manager
+    global Normalize, Patch, Line3DCollection, lambdify, latex, symbols, sympify
+    if _BACKEND_READY:
+        return
+    with _BACKEND_LOCK:
+        if _BACKEND_READY:
+            return
+        import matplotlib as _matplotlib
+
+        _matplotlib.use("Agg")
+        import matplotlib.pyplot as _plt
+        import numpy as _np
+        import sympy as _sp
+        from matplotlib import font_manager as _font_manager
+        from matplotlib.colors import Normalize as _Normalize
+        from matplotlib.patches import Patch as _Patch
+        from mpl_toolkits.mplot3d.art3d import Line3DCollection as _Line3DCollection
+        from sympy import lambdify as _lambdify
+        from sympy import latex as _latex
+        from sympy import symbols as _symbols
+        from sympy import sympify as _sympify
+
+        matplotlib = _matplotlib
+        plt = _plt
+        np = _np
+        sp = _sp
+        font_manager = _font_manager
+        Normalize = _Normalize
+        Patch = _Patch
+        Line3DCollection = _Line3DCollection
+        lambdify = _lambdify
+        latex = _latex
+        symbols = _symbols
+        sympify = _sympify
+        _BACKEND_READY = True
 
 
 PLOT_SAFE_NAME_PATTERN = re.compile(r"^[A-Za-z0-9_\s+\-*/^().,=<>|:]+$")
@@ -41,6 +119,46 @@ PLOT_BLOCKED_TOKENS = (
     "getattr",
     "setattr",
 )
+
+PLOT_CACHE_VERSION = "v2"
+PLOT_DEFAULT_MAX_EXPRESSION_LENGTH = 1000
+PLOT_DEFAULT_MAX_RANGE_SPAN = 1000.0
+PLOT_DEFAULT_CACHE_MAX_FILES = 40
+PLOT_DEFAULT_CACHE_MAX_MB = 64.0
+PLOT_DEFAULT_MAX_VECTORS = 16
+PLOT_ALLOWED_FUNCTIONS = {
+    "sin",
+    "cos",
+    "tan",
+    "asin",
+    "acos",
+    "atan",
+    "sinh",
+    "cosh",
+    "tanh",
+    "exp",
+    "log",
+    "sqrt",
+    "Abs",
+    "Heaviside",
+    "Piecewise",
+    "sign",
+    "floor",
+    "ceiling",
+    "cot",
+    "sec",
+    "csc",
+    "acot",
+    "asec",
+    "acsc",
+    "atan2",
+    "log10",
+    "sinc",
+    "factorial",
+    "erf",
+    "Max",
+    "Min",
+}
 
 
 @dataclass(frozen=True)
@@ -61,13 +179,20 @@ class MathPlotService:
         self._config = config or {}
         self._temp_dir = Path(temp_dir)
         self._debug = debug or (lambda *_args, **_kwargs: None)
-        self._configure_fonts()
+        self._fonts_configured = False
 
     @property
     def temp_dir(self) -> Path:
         self._temp_dir.mkdir(parents=True, exist_ok=True)
         return self._temp_dir
 
+    def _ensure_ready(self) -> None:
+        _ensure_backend()
+        if not self._fonts_configured:
+            self._configure_fonts()
+            self._fonts_configured = True
+
+    @_close_new_figures_on_error
     def plot_function(
         self,
         expression: str,
@@ -77,24 +202,26 @@ class MathPlotService:
         xlabel: str = "",
         ylabel: str = "",
     ) -> PlotResult:
+        self._ensure_ready()
+        expression = self._strip_equation_lhs(expression, ("y", "f(x)"))
         expr = self._parse_expr(expression, variables=("x",))
         x_min, x_max = self._parse_range(x_range, self._text("plot_default_x_range", "-10,10"))
-        x_vals = np.linspace(x_min, x_max, self._int("plot_sample_points", 2000))
-        y_vals = self._evaluate_1d(expr, x_vals, variable=symbols("x"))
-        x_vals, y_vals = self._finite_pair(x_vals, y_vals)
-        if len(x_vals) == 0:
-            raise ValueError(f"Expression has no finite values on [{x_min}, {x_max}].")
-
         render_key = self._cache_key("plot_function", expression, x_range, title, xlabel, ylabel)
         target_path = self.temp_dir / f"plot_function_{render_key}.png"
         if self._cached(target_path):
             return PlotResult(target_path, f"已绘制函数 y = {latex(expr)}，x 范围 [{x_min}, {x_max}]。")
 
+        x_vals = np.linspace(x_min, x_max, self._bounded_int("plot_sample_points", 2000, 128, 10000))
+        y_vals = self._evaluate_1d(expr, x_vals, variable=symbols("x"))
+        x_vals, y_vals = self._finite_pair(x_vals, y_vals)
+        if len(x_vals) == 0:
+            raise ValueError(f"Expression has no finite values on [{x_min}, {x_max}].")
+
         fig, ax = self._make_2d_figure()
         ax.plot(
             x_vals,
             y_vals,
-            linewidth=self._float("plot_line_width", 2.0),
+            linewidth=self._bounded_float("plot_line_width", 2.0, 0.1, 10.0),
             color=self._text("plot_primary_color", "#2563EB"),
             label=f"$y = {latex(expr)}$",
         )
@@ -104,6 +231,7 @@ class MathPlotService:
         self._save_and_close(fig, target_path)
         return PlotResult(target_path, f"已绘制函数 y = {latex(expr)}，x 范围 [{x_min}, {x_max}]。")
 
+    @_close_new_figures_on_error
     def plot_multiple(
         self,
         expressions: str,
@@ -113,21 +241,23 @@ class MathPlotService:
         xlabel: str = "",
         ylabel: str = "",
     ) -> PlotResult:
-        expr_texts = self.split_expressions(expressions)
+        self._ensure_ready()
+        expr_texts = [self._strip_equation_lhs(item, ("y", "f(x)")) for item in self.split_expressions(expressions)]
         if len(expr_texts) < 2:
             raise ValueError("Please provide at least two comma-separated expressions.")
-        max_count = self._int("plot_max_functions", 6)
+        max_count = self._bounded_int("plot_max_functions", 6, 2, 12)
         if len(expr_texts) > max_count:
             raise ValueError(f"At most {max_count} functions can be plotted together.")
 
         parsed = [self._parse_expr(item, variables=("x",)) for item in expr_texts]
         x_min, x_max = self._parse_range(x_range, self._text("plot_default_x_range", "-10,10"))
-        x_vals = np.linspace(x_min, x_max, self._int("plot_sample_points", 2000))
-
-        render_key = self._cache_key("plot_multiple", expressions, x_range, title, xlabel, ylabel)
+        normalized_expressions = ", ".join(expr_texts)
+        render_key = self._cache_key("plot_multiple", normalized_expressions, x_range, title, xlabel, ylabel)
         target_path = self.temp_dir / f"plot_multiple_{render_key}.png"
         if self._cached(target_path):
             return PlotResult(target_path, f"已绘制 {len(parsed)} 条函数曲线，x 范围 [{x_min}, {x_max}]。")
+
+        x_vals = np.linspace(x_min, x_max, self._bounded_int("plot_sample_points", 2000, 128, 10000))
 
         fig, ax = self._make_2d_figure()
         colors = self._plot_colors()
@@ -140,7 +270,7 @@ class MathPlotService:
             ax.plot(
                 xs,
                 ys,
-                linewidth=self._float("plot_line_width", 2.0),
+                linewidth=self._bounded_float("plot_line_width", 2.0, 0.1, 10.0),
                 color=colors[index % len(colors)],
                 label=f"$y = {latex(expr)}$",
             )
@@ -155,6 +285,7 @@ class MathPlotService:
         self._save_and_close(fig, target_path)
         return PlotResult(target_path, f"已绘制 {plotted} 条函数曲线，x 范围 [{x_min}, {x_max}]。")
 
+    @_close_new_figures_on_error
     def plot_implicit(
         self,
         equation: str,
@@ -165,10 +296,16 @@ class MathPlotService:
         xlabel: str = "",
         ylabel: str = "",
     ) -> PlotResult:
+        self._ensure_ready()
         expr = self._parse_equation_as_zero(equation, variables=("x", "y"))
         x_min, x_max = self._parse_range(x_range, self._text("plot_default_implicit_range", "-5,5"))
         y_min, y_max = self._parse_range(y_range, f"{x_min},{x_max}")
-        density = self._int("plot_implicit_grid_density", 420)
+        density = self._bounded_int("plot_implicit_grid_density", 420, 32, 800)
+        render_key = self._cache_key("plot_implicit", equation, x_range, y_range, title, xlabel, ylabel)
+        target_path = self.temp_dir / f"plot_implicit_{render_key}.png"
+        if self._cached(target_path):
+            return PlotResult(target_path, f"已绘制隐式方程 {latex(expr)} = 0。")
+
         xs = np.linspace(x_min, x_max, density)
         ys = np.linspace(y_min, y_max, density)
         x_grid, y_grid = np.meshgrid(xs, ys)
@@ -177,11 +314,6 @@ class MathPlotService:
         if not np.isfinite(values).any():
             raise ValueError("Implicit equation has no finite values in the requested range.")
 
-        render_key = self._cache_key("plot_implicit", equation, x_range, y_range, title, xlabel, ylabel)
-        target_path = self.temp_dir / f"plot_implicit_{render_key}.png"
-        if self._cached(target_path):
-            return PlotResult(target_path, f"已绘制隐式方程 {latex(expr)} = 0。")
-
         fig, ax = self._make_2d_figure()
         ax.contour(
             x_grid,
@@ -189,7 +321,7 @@ class MathPlotService:
             values,
             levels=[0],
             colors=self._text("plot_primary_color", "#2563EB"),
-            linewidths=self._float("plot_line_width", 2.0),
+            linewidths=self._bounded_float("plot_line_width", 2.0, 0.1, 10.0),
         )
         if self._bool("plot_implicit_show_aux_contours", True):
             ax.contour(x_grid, y_grid, values, levels=10, colors="#64748B", linewidths=0.35, alpha=0.45)
@@ -198,6 +330,7 @@ class MathPlotService:
         self._save_and_close(fig, target_path)
         return PlotResult(target_path, f"已绘制隐式方程 {latex(expr)} = 0。")
 
+    @_close_new_figures_on_error
     def plot_polar(
         self,
         expression: str,
@@ -205,10 +338,17 @@ class MathPlotService:
         theta_range: str = "",
         title: str = "",
     ) -> PlotResult:
+        self._ensure_ready()
         theta = symbols("theta")
+        expression = self._strip_equation_lhs(expression, ("r", "r(theta)", "r(θ)"))
         expr = self._parse_expr(expression, variables=("theta",))
         t_min, t_max = self._parse_range(theta_range, self._text("plot_default_theta_range", "0,2*pi"))
-        theta_vals = np.linspace(t_min, t_max, self._int("plot_sample_points", 2000))
+        render_key = self._cache_key("plot_polar", expression, theta_range, title)
+        target_path = self.temp_dir / f"plot_polar_{render_key}.png"
+        if self._cached(target_path):
+            return PlotResult(target_path, f"已绘制极坐标曲线 r = {latex(expr)}。")
+
+        theta_vals = np.linspace(t_min, t_max, self._bounded_int("plot_sample_points", 2000, 128, 10000))
         r_vals = self._evaluate_1d(expr, theta_vals, variable=theta)
         mask = np.isfinite(theta_vals) & np.isfinite(r_vals)
         theta_vals = theta_vals[mask]
@@ -216,30 +356,27 @@ class MathPlotService:
         if len(theta_vals) == 0:
             raise ValueError("Polar expression has no finite values in the requested range.")
 
-        render_key = self._cache_key("plot_polar", expression, theta_range, title)
-        target_path = self.temp_dir / f"plot_polar_{render_key}.png"
-        if self._cached(target_path):
-            return PlotResult(target_path, f"已绘制极坐标曲线 r = {latex(expr)}。")
-
+        polar_size = self._bounded_float("plot_polar_figure_size_in", 8.0, 3.0, 24.0)
         fig = plt.figure(
-            figsize=(self._float("plot_polar_figure_size_in", 8.0), self._float("plot_polar_figure_size_in", 8.0)),
-            dpi=self._int("plot_dpi", 140),
+            figsize=(polar_size, polar_size),
+            dpi=self._bounded_int("plot_dpi", 140, 72, 320),
             constrained_layout=True,
         )
         ax = fig.add_subplot(111, projection="polar")
         ax.plot(
             theta_vals,
             r_vals,
-            linewidth=self._float("plot_line_width", 2.0),
+            linewidth=self._bounded_float("plot_line_width", 2.0, 0.1, 10.0),
             color=self._text("plot_polar_color", "#DB2777"),
             label=f"$r = {latex(expr)}$",
         )
-        ax.grid(True, alpha=self._float("plot_grid_alpha", 0.28), linestyle="--")
+        ax.grid(True, alpha=self._bounded_float("plot_grid_alpha", 0.28, 0.0, 1.0), linestyle="--")
         ax.legend(fontsize=10, loc="upper right")
         ax.set_title(title or f"$r = {latex(expr)}$", fontsize=14, pad=14)
         self._save_and_close(fig, target_path, tight=False)
         return PlotResult(target_path, f"已绘制极坐标曲线 r = {latex(expr)}。")
 
+    @_close_new_figures_on_error
     def plot_parametric(
         self,
         x_expression: str,
@@ -250,27 +387,30 @@ class MathPlotService:
         xlabel: str = "",
         ylabel: str = "",
     ) -> PlotResult:
+        self._ensure_ready()
         t = symbols("t")
+        x_expression = self._strip_equation_lhs(x_expression, ("x", "x(t)"))
+        y_expression = self._strip_equation_lhs(y_expression, ("y", "y(t)"))
         expr_x = self._parse_expr(x_expression, variables=("t",))
         expr_y = self._parse_expr(y_expression, variables=("t",))
         t_min, t_max = self._parse_range(t_range, self._text("plot_default_t_range", "0,2*pi"))
-        t_vals = np.linspace(t_min, t_max, self._int("plot_parametric_sample_points", 3000))
+        render_key = self._cache_key("plot_parametric", x_expression, y_expression, t_range, title, xlabel, ylabel)
+        target_path = self.temp_dir / f"plot_parametric_{render_key}.png"
+        if self._cached(target_path):
+            return PlotResult(target_path, "已绘制二维参数曲线。")
+
+        t_vals = np.linspace(t_min, t_max, self._bounded_int("plot_parametric_sample_points", 3000, 128, 12000))
         x_vals = self._evaluate_1d(expr_x, t_vals, variable=t)
         y_vals = self._evaluate_1d(expr_y, t_vals, variable=t)
         x_vals, y_vals = self._finite_pair(x_vals, y_vals)
         if len(x_vals) == 0:
             raise ValueError("Parametric curve has no finite points in the requested range.")
 
-        render_key = self._cache_key("plot_parametric", x_expression, y_expression, t_range, title, xlabel, ylabel)
-        target_path = self.temp_dir / f"plot_parametric_{render_key}.png"
-        if self._cached(target_path):
-            return PlotResult(target_path, "已绘制二维参数曲线。")
-
         fig, ax = self._make_2d_figure()
         ax.plot(
             x_vals,
             y_vals,
-            linewidth=self._float("plot_line_width", 2.0),
+            linewidth=self._bounded_float("plot_line_width", 2.0, 0.1, 10.0),
             color=self._text("plot_parametric_color", "#7C3AED"),
             label=f"$x={latex(expr_x)},\\ y={latex(expr_y)}$",
         )
@@ -281,6 +421,7 @@ class MathPlotService:
         self._save_and_close(fig, target_path)
         return PlotResult(target_path, "已绘制二维参数曲线。")
 
+    @_close_new_figures_on_error
     def plot_surface(
         self,
         expression: str,
@@ -292,10 +433,17 @@ class MathPlotService:
         ylabel: str = "",
         zlabel: str = "",
     ) -> PlotResult:
+        self._ensure_ready()
+        expression = self._strip_equation_lhs(expression, ("z", "z(x,y)", "f(x,y)"))
         expr = self._parse_expr(expression, variables=("x", "y"))
         x_min, x_max = self._parse_range(x_range, self._text("plot_default_3d_range", "-5,5"))
         y_min, y_max = self._parse_range(y_range, f"{x_min},{x_max}")
-        density = self._int("plot_3d_grid_density", 160)
+        density = self._bounded_int("plot_3d_grid_density", 160, 24, 320)
+        render_key = self._cache_key("plot_surface", expression, x_range, y_range, title, xlabel, ylabel, zlabel)
+        target_path = self.temp_dir / f"plot_surface_{render_key}.png"
+        if self._cached(target_path):
+            return PlotResult(target_path, f"已绘制三维曲面 z = {latex(expr)}。")
+
         xs = np.linspace(x_min, x_max, density)
         ys = np.linspace(y_min, y_max, density)
         x_grid, y_grid = np.meshgrid(xs, ys)
@@ -305,19 +453,14 @@ class MathPlotService:
         if np.all(np.isnan(z_grid)):
             raise ValueError("Surface expression has no finite values in the requested range.")
 
-        render_key = self._cache_key("plot_surface", expression, x_range, y_range, title, xlabel, ylabel, zlabel)
-        target_path = self.temp_dir / f"plot_surface_{render_key}.png"
-        if self._cached(target_path):
-            return PlotResult(target_path, f"已绘制三维曲面 z = {latex(expr)}。")
-
-        fig = plt.figure(figsize=(11, 8), dpi=self._int("plot_dpi", 140), facecolor="white", constrained_layout=True)
+        fig = plt.figure(figsize=(11, 8), dpi=self._bounded_int("plot_dpi", 140, 72, 320), facecolor="white", constrained_layout=True)
         ax = fig.add_subplot(111, projection="3d")
         surface = ax.plot_surface(
             x_grid,
             y_grid,
             z_grid,
             cmap=self._text("plot_3d_cmap", "viridis"),
-            alpha=self._float("plot_3d_alpha", 0.88),
+            alpha=self._bounded_float("plot_3d_alpha", 0.88, 0.05, 1.0),
             linewidth=0,
             antialiased=True,
         )
@@ -327,10 +470,14 @@ class MathPlotService:
         fig.colorbar(surface, ax=ax, shrink=0.58, aspect=14, label=zlabel or "z")
         self._style_3d_axes(ax, xlabel or "x", ylabel or "y", zlabel or "z")
         ax.set_title(title or f"$z = {latex(expr)}$", fontsize=14)
-        ax.view_init(elev=self._float("plot_3d_elev", 25), azim=self._float("plot_3d_azim", -60))
+        ax.view_init(
+            elev=self._bounded_float("plot_3d_elev", 25.0, -90.0, 90.0),
+            azim=self._bounded_float("plot_3d_azim", -60.0, -360.0, 360.0),
+        )
         self._save_and_close(fig, target_path)
         return PlotResult(target_path, f"已绘制三维曲面 z = {latex(expr)}。")
 
+    @_close_new_figures_on_error
     def plot_parametric_3d(
         self,
         x_expression: str,
@@ -343,23 +490,17 @@ class MathPlotService:
         ylabel: str = "",
         zlabel: str = "",
     ) -> PlotResult:
+        self._ensure_ready()
         t = symbols("t")
+        x_expression = self._strip_equation_lhs(x_expression, ("x", "x(t)"))
+        y_expression = self._strip_equation_lhs(y_expression, ("y", "y(t)"))
+        z_expression = self._strip_equation_lhs(z_expression, ("z", "z(t)"))
         expr_x = self._parse_expr(x_expression, variables=("t",))
         expr_y = self._parse_expr(y_expression, variables=("t",))
         expr_z = self._parse_expr(z_expression, variables=("t",))
         t_min, t_max = self._parse_range(t_range, self._text("plot_default_3d_t_range", "0,4*pi"))
-        t_vals = np.linspace(t_min, t_max, self._int("plot_parametric_sample_points", 3000))
-        x_vals = self._evaluate_1d(expr_x, t_vals, variable=t)
-        y_vals = self._evaluate_1d(expr_y, t_vals, variable=t)
-        z_vals = self._evaluate_1d(expr_z, t_vals, variable=t)
-        mask = np.isfinite(x_vals) & np.isfinite(y_vals) & np.isfinite(z_vals)
-        t_vals = t_vals[mask]
-        x_vals, y_vals, z_vals = x_vals[mask], y_vals[mask], z_vals[mask]
-        if len(x_vals) < 2:
-            raise ValueError("3D parametric curve has no finite points in the requested range.")
-
         cmap_name = self._text("plot_3d_parametric_cmap", "plasma") or "plasma"
-        line_width = self._float("plot_line_width", 2.0)
+        line_width = self._bounded_float("plot_line_width", 2.0, 0.1, 10.0)
         render_key = self._cache_key(
             "plot_parametric_3d",
             "gradient_t_v1",
@@ -378,7 +519,17 @@ class MathPlotService:
         if self._cached(target_path):
             return PlotResult(target_path, "已绘制三维参数曲线。")
 
-        fig = plt.figure(figsize=(11, 8), dpi=self._int("plot_dpi", 140), facecolor="white", constrained_layout=True)
+        t_vals = np.linspace(t_min, t_max, self._bounded_int("plot_parametric_sample_points", 3000, 128, 12000))
+        x_vals = self._evaluate_1d(expr_x, t_vals, variable=t)
+        y_vals = self._evaluate_1d(expr_y, t_vals, variable=t)
+        z_vals = self._evaluate_1d(expr_z, t_vals, variable=t)
+        mask = np.isfinite(x_vals) & np.isfinite(y_vals) & np.isfinite(z_vals)
+        t_vals = t_vals[mask]
+        x_vals, y_vals, z_vals = x_vals[mask], y_vals[mask], z_vals[mask]
+        if len(x_vals) < 2:
+            raise ValueError("3D parametric curve has no finite points in the requested range.")
+
+        fig = plt.figure(figsize=(11, 8), dpi=self._bounded_int("plot_dpi", 140, 72, 320), facecolor="white", constrained_layout=True)
         ax = fig.add_subplot(111, projection="3d")
         points = np.column_stack((x_vals, y_vals, z_vals)).reshape(-1, 1, 3)
         segments = np.concatenate((points[:-1], points[1:]), axis=1)
@@ -401,10 +552,14 @@ class MathPlotService:
             title or f"$(x,y,z)=({latex(expr_x)}, {latex(expr_y)}, {latex(expr_z)})$",
             fontsize=14,
         )
-        ax.view_init(elev=self._float("plot_3d_elev", 25), azim=self._float("plot_3d_azim", -60))
+        ax.view_init(
+            elev=self._bounded_float("plot_3d_elev", 25.0, -90.0, 90.0),
+            azim=self._bounded_float("plot_3d_azim", -60.0, -360.0, 360.0),
+        )
         self._save_and_close(fig, target_path)
         return PlotResult(target_path, "已绘制三维参数曲线。")
 
+    @_close_new_figures_on_error
     def plot_spherical_3d(
         self,
         expression: str,
@@ -416,8 +571,10 @@ class MathPlotService:
         ylabel: str = "",
         zlabel: str = "",
     ) -> PlotResult:
+        self._ensure_ready()
         theta = symbols("theta")
         phi = symbols("phi")
+        expression = self._strip_equation_lhs(expression, ("r", "r(theta,phi)", "r(θ,φ)"))
         expr = self._parse_expr(expression, variables=("theta", "phi"))
         theta_min, theta_max = self._parse_range(
             theta_range,
@@ -427,20 +584,7 @@ class MathPlotService:
             phi_range,
             self._text("plot_default_spherical_phi_range", "0,2*pi"),
         )
-        density = max(24, self._int("plot_3d_grid_density", 160))
-        theta_vals = np.linspace(theta_min, theta_max, density)
-        phi_vals = np.linspace(phi_min, phi_max, density * 2)
-        theta_grid, phi_grid = np.meshgrid(theta_vals, phi_vals)
-        func = lambdify((theta, phi), expr, "numpy")
-        radius = self._as_grid(func(theta_grid, phi_grid), theta_grid.shape)
-        radius[~np.isfinite(radius)] = np.nan
-        if np.all(np.isnan(radius)):
-            raise ValueError("Spherical expression has no finite values in the requested range.")
-
-        x_grid = radius * np.sin(theta_grid) * np.cos(phi_grid)
-        y_grid = radius * np.sin(theta_grid) * np.sin(phi_grid)
-        z_grid = radius * np.cos(theta_grid)
-
+        density = self._bounded_int("plot_3d_grid_density", 160, 24, 320)
         render_key = self._cache_key(
             "plot_spherical_3d",
             expression,
@@ -455,16 +599,29 @@ class MathPlotService:
         if self._cached(target_path):
             return PlotResult(target_path, f"已绘制球坐标曲面 r = {latex(expr)}。")
 
-        fig = plt.figure(figsize=(11, 8), dpi=self._int("plot_dpi", 140), facecolor="white", constrained_layout=True)
+        theta_vals = np.linspace(theta_min, theta_max, density)
+        phi_vals = np.linspace(phi_min, phi_max, density * 2)
+        theta_grid, phi_grid = np.meshgrid(theta_vals, phi_vals)
+        func = lambdify((theta, phi), expr, "numpy")
+        radius = self._as_grid(func(theta_grid, phi_grid), theta_grid.shape)
+        radius[~np.isfinite(radius)] = np.nan
+        if np.all(np.isnan(radius)):
+            raise ValueError("Spherical expression has no finite values in the requested range.")
+
+        x_grid = radius * np.sin(theta_grid) * np.cos(phi_grid)
+        y_grid = radius * np.sin(theta_grid) * np.sin(phi_grid)
+        z_grid = radius * np.cos(theta_grid)
+
+        fig = plt.figure(figsize=(11, 8), dpi=self._bounded_int("plot_dpi", 140, 72, 320), facecolor="white", constrained_layout=True)
         ax = fig.add_subplot(111, projection="3d")
-        surface = ax.plot_surface(
+        ax.plot_surface(
             x_grid,
             y_grid,
             z_grid,
             facecolors=plt.get_cmap(self._text("plot_3d_cmap", "viridis"))(
                 Normalize(vmin=float(np.nanmin(radius)), vmax=float(np.nanmax(radius)))(radius)
             ),
-            alpha=self._float("plot_3d_alpha", 0.88),
+            alpha=self._bounded_float("plot_3d_alpha", 0.88, 0.05, 1.0),
             linewidth=0,
             antialiased=True,
         )
@@ -477,10 +634,14 @@ class MathPlotService:
         self._set_3d_data_limits(ax, x_grid.ravel(), y_grid.ravel(), z_grid.ravel())
         self._style_3d_axes(ax, xlabel or "x", ylabel or "y", zlabel or "z")
         ax.set_title(title or f"$r = {latex(expr)}$", fontsize=14)
-        ax.view_init(elev=self._float("plot_3d_elev", 25), azim=self._float("plot_3d_azim", -60))
+        ax.view_init(
+            elev=self._bounded_float("plot_3d_elev", 25.0, -90.0, 90.0),
+            azim=self._bounded_float("plot_3d_azim", -60.0, -360.0, 360.0),
+        )
         self._save_and_close(fig, target_path)
         return PlotResult(target_path, f"已绘制球坐标曲面 r = {latex(expr)}。")
 
+    @_close_new_figures_on_error
     def plot_multiple_surfaces(
         self,
         expressions: str,
@@ -492,27 +653,41 @@ class MathPlotService:
         ylabel: str = "",
         zlabel: str = "",
     ) -> PlotResult:
-        expr_texts = self.split_expressions(expressions)
+        self._ensure_ready()
+        expr_texts = [
+            self._strip_equation_lhs(item, ("z", "z(x,y)", "f(x,y)"))
+            for item in self.split_expressions(expressions)
+        ]
         if len(expr_texts) < 2:
             raise ValueError("Please provide at least two comma-separated 3D surface expressions.")
-        max_count = self._int("plot_3d_max_surfaces", 5)
+        max_count = self._bounded_int("plot_3d_max_surfaces", 5, 2, 8)
         if len(expr_texts) > max_count:
             raise ValueError(f"At most {max_count} 3D surfaces can be plotted together.")
 
         parsed = [self._parse_expr(item, variables=("x", "y")) for item in expr_texts]
         x_min, x_max = self._parse_range(x_range, self._text("plot_default_3d_range", "-5,5"))
         y_min, y_max = self._parse_range(y_range, f"{x_min},{x_max}")
-        density = self._int("plot_3d_grid_density", 160)
-        xs = np.linspace(x_min, x_max, density)
-        ys = np.linspace(y_min, y_max, density)
-        x_grid, y_grid = np.meshgrid(xs, ys)
-
-        render_key = self._cache_key("plot_multiple_surfaces", expressions, x_range, y_range, title, xlabel, ylabel, zlabel)
+        density = self._bounded_int("plot_3d_grid_density", 160, 24, 320)
+        normalized_expressions = ", ".join(expr_texts)
+        render_key = self._cache_key(
+            "plot_multiple_surfaces",
+            normalized_expressions,
+            x_range,
+            y_range,
+            title,
+            xlabel,
+            ylabel,
+            zlabel,
+        )
         target_path = self.temp_dir / f"plot_multiple_surfaces_{render_key}.png"
         if self._cached(target_path):
             return PlotResult(target_path, f"已绘制 {len(parsed)} 个三维曲面对比。")
 
-        fig = plt.figure(figsize=(11, 8), dpi=self._int("plot_dpi", 140), facecolor="white", constrained_layout=True)
+        xs = np.linspace(x_min, x_max, density)
+        ys = np.linspace(y_min, y_max, density)
+        x_grid, y_grid = np.meshgrid(xs, ys)
+
+        fig = plt.figure(figsize=(11, 8), dpi=self._bounded_int("plot_dpi", 140, 72, 320), facecolor="white", constrained_layout=True)
         ax = fig.add_subplot(111, projection="3d")
         colors = self._plot_colors()
         proxies: list[Patch] = []
@@ -546,10 +721,14 @@ class MathPlotService:
         self._style_3d_axes(ax, xlabel or "x", ylabel or "y", zlabel or "z")
         ax.legend(handles=proxies, fontsize=9, loc="upper left")
         ax.set_title(title or "3D surface comparison", fontsize=14)
-        ax.view_init(elev=self._float("plot_3d_elev", 25), azim=self._float("plot_3d_azim", -60))
+        ax.view_init(
+            elev=self._bounded_float("plot_3d_elev", 25.0, -90.0, 90.0),
+            azim=self._bounded_float("plot_3d_azim", -60.0, -360.0, 360.0),
+        )
         self._save_and_close(fig, target_path)
         return PlotResult(target_path, f"已绘制 {plotted} 个三维曲面对比。")
 
+    @_close_new_figures_on_error
     def plot_implicit_3d(
         self,
         equation: str,
@@ -562,24 +741,25 @@ class MathPlotService:
         ylabel: str = "",
         zlabel: str = "",
     ) -> PlotResult:
+        self._ensure_ready()
         expr = self._parse_equation_as_zero(equation, variables=("x", "y", "z"))
         x_min, x_max = self._parse_range(x_range, self._text("plot_default_implicit_3d_range", "-3,3"))
         y_min, y_max = self._parse_range(y_range, f"{x_min},{x_max}")
         z_min, z_max = self._parse_range(z_range, f"{x_min},{x_max}")
-        density = self._int("plot_implicit_3d_grid_density", 96)
-        slices = self._int("plot_implicit_3d_slices", 48)
+        density = self._bounded_int("plot_implicit_3d_grid_density", 96, 16, 220)
+        slices = self._bounded_int("plot_implicit_3d_slices", 48, 8, 160)
+        render_key = self._cache_key("plot_implicit_3d", "z_slices_v1", equation, x_range, y_range, z_range, title, xlabel, ylabel, zlabel)
+        target_path = self.temp_dir / f"plot_implicit_3d_{render_key}.png"
+        if self._cached(target_path):
+            return PlotResult(target_path, f"已绘制隐式三维曲面 {latex(expr)} = 0。")
+
         xs = np.linspace(x_min, x_max, density)
         ys = np.linspace(y_min, y_max, density)
         zs = np.linspace(z_min, z_max, max(8, slices))
         x_grid, y_grid = np.meshgrid(xs, ys)
         func = lambdify((symbols("x"), symbols("y"), symbols("z")), expr, "numpy")
 
-        render_key = self._cache_key("plot_implicit_3d", "z_slices_v1", equation, x_range, y_range, z_range, title, xlabel, ylabel, zlabel)
-        target_path = self.temp_dir / f"plot_implicit_3d_{render_key}.png"
-        if self._cached(target_path):
-            return PlotResult(target_path, f"已绘制隐式三维曲面 {latex(expr)} = 0。")
-
-        fig = plt.figure(figsize=(11, 8), dpi=self._int("plot_dpi", 140), facecolor="white", constrained_layout=True)
+        fig = plt.figure(figsize=(11, 8), dpi=self._bounded_int("plot_dpi", 140, 72, 320), facecolor="white", constrained_layout=True)
         ax = fig.add_subplot(111, projection="3d")
         contour_count = 0
         for z_value in zs:
@@ -600,7 +780,7 @@ class MathPlotService:
                 zdir="z",
                 offset=float(z_value),
                 colors=self._text("plot_primary_color", "#2563EB"),
-                linewidths=max(0.4, self._float("plot_line_width", 2.0) * 0.45),
+                linewidths=max(0.4, self._bounded_float("plot_line_width", 2.0, 0.1, 10.0) * 0.45),
                 alpha=0.58,
             )
             contour_count += 1
@@ -613,10 +793,14 @@ class MathPlotService:
         ax.set_zlim(z_min, z_max)
         self._style_3d_axes(ax, xlabel or "x", ylabel or "y", zlabel or "z")
         ax.set_title(title or f"${latex(expr)} = 0$", fontsize=14)
-        ax.view_init(elev=self._float("plot_3d_elev", 25), azim=self._float("plot_3d_azim", -60))
+        ax.view_init(
+            elev=self._bounded_float("plot_3d_elev", 25.0, -90.0, 90.0),
+            azim=self._bounded_float("plot_3d_azim", -60.0, -360.0, 360.0),
+        )
         self._save_and_close(fig, target_path)
         return PlotResult(target_path, f"已绘制隐式三维曲面 {latex(expr)} = 0。")
 
+    @_close_new_figures_on_error
     def plot_vectors_3d(
         self,
         vectors: str,
@@ -626,9 +810,13 @@ class MathPlotService:
         ylabel: str = "",
         zlabel: str = "",
     ) -> PlotResult:
+        self._ensure_ready()
         vector_defs = [item.strip() for item in re.split(r"[;；\n]+", vectors or "") if item.strip()]
         if not vector_defs:
             raise ValueError("Please provide at least one 3D vector definition.")
+        max_vectors = self._bounded_int("plot_max_vectors", PLOT_DEFAULT_MAX_VECTORS, 1, 64)
+        if len(vector_defs) > max_vectors:
+            raise ValueError(f"At most {max_vectors} 3D vectors can be plotted together.")
         parsed = [self._parse_vector_3d(item) for item in vector_defs]
 
         render_key = self._cache_key("plot_vectors_3d", vectors, title, xlabel, ylabel, zlabel)
@@ -636,7 +824,7 @@ class MathPlotService:
         if self._cached(target_path):
             return PlotResult(target_path, f"已绘制 {len(parsed)} 个三维向量。")
 
-        fig = plt.figure(figsize=(11, 8), dpi=self._int("plot_dpi", 140), facecolor="white", constrained_layout=True)
+        fig = plt.figure(figsize=(11, 8), dpi=self._bounded_int("plot_dpi", 140, 72, 320), facecolor="white", constrained_layout=True)
         ax = fig.add_subplot(111, projection="3d")
         all_x: list[float] = []
         all_y: list[float] = []
@@ -656,7 +844,7 @@ class MathPlotService:
                 dz,
                 color=color,
                 arrow_length_ratio=0.14,
-                linewidth=self._float("plot_line_width", 2.0),
+                linewidth=self._bounded_float("plot_line_width", 2.0, 0.1, 10.0),
                 label=label,
             )
             ax.scatter([ex], [ey], [ez], color=color, s=24, alpha=0.9)
@@ -669,10 +857,14 @@ class MathPlotService:
         self._style_3d_axes(ax, xlabel or "x", ylabel or "y", zlabel or "z")
         ax.legend(fontsize=9, loc="upper left")
         ax.set_title(title or "3D vectors", fontsize=14)
-        ax.view_init(elev=self._float("plot_3d_elev", 25), azim=self._float("plot_3d_azim", -60))
+        ax.view_init(
+            elev=self._bounded_float("plot_3d_elev", 25.0, -90.0, 90.0),
+            azim=self._bounded_float("plot_3d_azim", -60.0, -360.0, 360.0),
+        )
         self._save_and_close(fig, target_path)
         return PlotResult(target_path, f"已绘制 {len(parsed)} 个三维向量。")
 
+    @_close_new_figures_on_error
     def plot_vector_field_2d(
         self,
         x_expression: str,
@@ -684,11 +876,17 @@ class MathPlotService:
         xlabel: str = "",
         ylabel: str = "",
     ) -> PlotResult:
+        self._ensure_ready()
         expr_x = self._parse_expr(x_expression, variables=("x", "y"))
         expr_y = self._parse_expr(y_expression, variables=("x", "y"))
         x_min, x_max = self._parse_range(x_range, self._text("plot_default_vector_range", "-5,5"))
         y_min, y_max = self._parse_range(y_range, f"{x_min},{x_max}")
-        density = self._int("plot_vector_field_density", 29)
+        density = self._bounded_int("plot_vector_field_density", 29, 8, 100)
+        render_key = self._cache_key("plot_vector_field", x_expression, y_expression, x_range, y_range, title)
+        target_path = self.temp_dir / f"plot_vector_field_{render_key}.png"
+        if self._cached(target_path):
+            return PlotResult(target_path, "已绘制二维向量场。")
+
         xs = np.linspace(x_min, x_max, density)
         ys = np.linspace(y_min, y_max, density)
         x_grid, y_grid = np.meshgrid(xs, ys)
@@ -707,11 +905,6 @@ class MathPlotService:
             u_vals = u_vals / magnitude_max
             v_vals = v_vals / magnitude_max
 
-        render_key = self._cache_key("plot_vector_field", x_expression, y_expression, x_range, y_range, title)
-        target_path = self.temp_dir / f"plot_vector_field_{render_key}.png"
-        if self._cached(target_path):
-            return PlotResult(target_path, "已绘制二维向量场。")
-
         fig, ax = self._make_2d_figure()
         quiver = ax.quiver(
             x_grid,
@@ -720,8 +913,8 @@ class MathPlotService:
             v_vals,
             magnitude,
             cmap=self._text("plot_vector_field_cmap", "plasma"),
-            scale=self._float("plot_vector_field_scale", 30.0),
-            width=self._float("plot_vector_field_width", 0.003),
+            scale=self._bounded_float("plot_vector_field_scale", 30.0, 1.0, 1000.0),
+            width=self._bounded_float("plot_vector_field_width", 0.003, 0.0001, 0.05),
             alpha=0.86,
             pivot="mid",
         )
@@ -732,6 +925,7 @@ class MathPlotService:
         return PlotResult(target_path, "已绘制二维向量场。")
 
     def split_expressions(self, text: str) -> list[str]:
+        separators = {",", ";", "；", "\n"}
         items: list[str] = []
         current: list[str] = []
         depth = 0
@@ -740,7 +934,7 @@ class MathPlotService:
                 depth += 1
             elif char in ")]}" and depth > 0:
                 depth -= 1
-            if char == "," and depth == 0:
+            if char in separators and depth == 0:
                 item = "".join(current).strip()
                 if item:
                     items.append(item)
@@ -842,11 +1036,62 @@ class MathPlotService:
         left, right = text.split("=", 1)
         return self._parse_expr(f"({left})-({right})", variables=variables)
 
+    def _strip_equation_lhs(self, expression: str, allowed_lhs: tuple[str, ...]) -> str:
+        text = (expression or "").strip()
+        if "=" not in text:
+            return text
+        lhs, rhs = text.split("=", 1)
+        normalized_lhs = re.sub(r"\s+", "", lhs).lower()
+        allowed = {re.sub(r"\s+", "", item).lower() for item in allowed_lhs}
+        return rhs.strip() if normalized_lhs in allowed else text
+
     def _parse_expr(self, expression: str, *, variables: tuple[str, ...]) -> sp.Expr:
+        self._ensure_ready()
         text = self._preprocess_expr(expression)
+        max_length = self._bounded_int(
+            "plot_max_expression_length",
+            PLOT_DEFAULT_MAX_EXPRESSION_LENGTH,
+            64,
+            10_000,
+        )
+        if len(text) > max_length:
+            raise ValueError(f"Expression is too long (maximum {max_length} characters).")
         self._validate_expression(text)
         locals_dict = self._locals_for(variables)
-        return sympify(text, locals=locals_dict)
+        try:
+            parsed = sympify(text, locals=locals_dict)
+        except Exception as exc:
+            raise ValueError(f"Invalid mathematical expression: {exc}") from exc
+        if not isinstance(parsed, sp.Expr):
+            raise TypeError("Expression must evaluate to a scalar mathematical expression.")
+
+        allowed_symbols = set(variables)
+        unknown_symbols = {str(item) for item in parsed.free_symbols if str(item) not in allowed_symbols}
+        if unknown_symbols:
+            names = ", ".join(sorted(unknown_symbols))
+            raise ValueError(f"Unknown variable(s): {names}.")
+
+        unknown_functions = {
+            getattr(item.func, "__name__", str(item.func))
+            for item in parsed.atoms(sp.Function)
+            if getattr(item.func, "__name__", str(item.func)) not in PLOT_ALLOWED_FUNCTIONS
+        }
+        if unknown_functions:
+            names = ", ".join(sorted(unknown_functions))
+            raise ValueError(f"Unsupported function(s): {names}.")
+
+        max_ops = self._bounded_int("plot_max_expression_ops", 250, 16, 10_000)
+        if int(sp.count_ops(parsed)) > max_ops:
+            raise ValueError(f"Expression is too complex (maximum {max_ops} operations).")
+        for power in parsed.atoms(sp.Pow):
+            exponent = power.exp
+            if exponent.is_integer and exponent.is_number:
+                try:
+                    if abs(int(exponent)) > self._bounded_int("plot_max_power", 1000, 8, 1_000_000):
+                        raise ValueError("Expression power is too large.")
+                except (TypeError, ValueError, OverflowError):
+                    raise ValueError("Expression power is invalid or too large.") from None
+        return parsed
 
     def _preprocess_expr(self, expression: str) -> str:
         text = (expression or "").strip()
@@ -873,13 +1118,22 @@ class MathPlotService:
             "asin": sp.asin,
             "acos": sp.acos,
             "atan": sp.atan,
+            "atan2": sp.atan2,
             "sinh": sp.sinh,
             "cosh": sp.cosh,
             "tanh": sp.tanh,
+            "cot": sp.cot,
+            "sec": sp.sec,
+            "csc": sp.csc,
+            "acot": sp.acot,
+            "asec": sp.asec,
+            "acsc": sp.acsc,
             "exp": sp.exp,
             "log": sp.log,
+            "log10": lambda value: sp.log(value, 10),
             "ln": sp.log,
             "sqrt": sp.sqrt,
+            "sinc": sp.sinc,
             "abs": sp.Abs,
             "Abs": sp.Abs,
             "Max": sp.Max,
@@ -889,9 +1143,15 @@ class MathPlotService:
             "sign": sp.sign,
             "floor": sp.floor,
             "ceiling": sp.ceiling,
+            "factorial": sp.factorial,
+            "erf": sp.erf,
             "pi": sp.pi,
             "E": sp.E,
             "e": sp.E,
+            "I": sp.I,
+            "oo": sp.oo,
+            "zoo": sp.zoo,
+            "nan": sp.nan,
         }
         for name in variables:
             allowed[name] = symbols(name)
@@ -900,21 +1160,40 @@ class MathPlotService:
     def _evaluate_1d(self, expr: sp.Expr, values: np.ndarray, *, variable: sp.Symbol) -> np.ndarray:
         func = lambdify(variable, expr, "numpy")
         result = func(values)
-        if isinstance(result, (int, float, complex)):
-            result = np.full_like(values, result, dtype=float)
-        return np.asarray(result, dtype=float)
+        result_array = np.asarray(result)
+        if result_array.shape == ():
+            scalar = result_array
+            if np.iscomplexobj(scalar) and abs(complex(scalar)) > 1e-10:
+                raise ValueError("Expression produced non-real values.")
+            result = np.full_like(values, float(np.real(scalar)), dtype=float)
+        return self._real_array(result)
 
     def _finite_pair(self, x_values: np.ndarray, y_values: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
         mask = np.isfinite(x_values) & np.isfinite(y_values)
         return x_values[mask], y_values[mask]
 
     def _as_grid(self, value: Any, shape: tuple[int, ...]) -> np.ndarray:
-        grid = np.asarray(value, dtype=float)
+        grid = self._real_array(value)
         if grid.shape == ():
             return np.full(shape, float(grid), dtype=float)
         if grid.shape != shape:
             return np.broadcast_to(grid, shape).astype(float)
         return grid
+
+    def _real_array(self, value: Any) -> np.ndarray:
+        """Convert numerical output without silently discarding an imaginary part."""
+
+        array = np.asarray(value)
+        if np.iscomplexobj(array):
+            imaginary = np.asarray(np.abs(np.imag(array)), dtype=float)
+            finite_imaginary = imaginary[np.isfinite(imaginary)]
+            if finite_imaginary.size and float(np.max(finite_imaginary)) > 1e-10:
+                raise ValueError("Expression produced non-real values.")
+            array = np.real(array)
+        try:
+            return np.asarray(array, dtype=float)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Expression did not produce numeric values.") from exc
 
     def _parse_range(self, value: str, default: str) -> tuple[float, float]:
         raw = (value or default or "").strip()
@@ -927,18 +1206,24 @@ class MathPlotService:
         end = float(sp.N(self._parse_expr(parts[1], variables=())))
         if not math.isfinite(start) or not math.isfinite(end) or start >= end:
             raise ValueError(f"Invalid range: {raw!r}.")
+        max_span = self._bounded_float("plot_max_range_span", PLOT_DEFAULT_MAX_RANGE_SPAN, 1.0, 1_000_000.0)
+        if end - start > max_span:
+            raise ValueError(f"Range span is too large (maximum {max_span:g}).")
         return start, end
 
     def _make_2d_figure(self) -> tuple[Any, Any]:
         fig, ax = plt.subplots(
-            figsize=(self._float("plot_figure_width_in", 10.0), self._float("plot_figure_height_in", 6.0)),
-            dpi=self._int("plot_dpi", 140),
+            figsize=(
+                self._bounded_float("plot_figure_width_in", 10.0, 3.0, 24.0),
+                self._bounded_float("plot_figure_height_in", 6.0, 3.0, 24.0),
+            ),
+            dpi=self._bounded_int("plot_dpi", 140, 72, 320),
             constrained_layout=True,
         )
         return fig, ax
 
     def _style_2d_axes(self, ax: Any, xlabel: str, ylabel: str) -> None:
-        ax.grid(True, alpha=self._float("plot_grid_alpha", 0.28), linestyle="--")
+        ax.grid(True, alpha=self._bounded_float("plot_grid_alpha", 0.28, 0.0, 1.0), linestyle="--")
         ax.axhline(y=0, color="#0F172A", linewidth=0.8, alpha=0.75)
         ax.axvline(x=0, color="#0F172A", linewidth=0.8, alpha=0.75)
         ax.set_xlabel(xlabel, fontsize=11)
@@ -948,7 +1233,7 @@ class MathPlotService:
         ax.set_xlabel(xlabel, fontsize=10)
         ax.set_ylabel(ylabel, fontsize=10)
         ax.set_zlabel(zlabel, fontsize=10)
-        ax.grid(True, alpha=self._float("plot_grid_alpha", 0.28), linestyle="--")
+        ax.grid(True, alpha=self._bounded_float("plot_grid_alpha", 0.28, 0.0, 1.0), linestyle="--")
 
     def _set_3d_data_limits(
         self,
@@ -975,21 +1260,137 @@ class MathPlotService:
 
     def _save_and_close(self, fig: Any, target_path: Path, *, tight: bool = True) -> None:
         target_path.parent.mkdir(parents=True, exist_ok=True)
-        kwargs: dict[str, Any] = {"dpi": self._int("plot_dpi", 140), "facecolor": "white"}
+        kwargs: dict[str, Any] = {"dpi": self._bounded_int("plot_dpi", 140, 72, 320), "facecolor": "white"}
         if tight:
             kwargs["bbox_inches"] = "tight"
-        fig.savefig(target_path, **kwargs)
-        plt.close(fig)
+        try:
+            fig.savefig(target_path, **kwargs)
+        except Exception:
+            target_path.unlink(missing_ok=True)
+            raise
+        finally:
+            plt.close(fig)
+        self._trim_cache(target_path)
 
     def _cached(self, target_path: Path) -> bool:
-        if self._bool("enable_cache", True) and target_path.exists():
-            target_path.touch()
-            return True
+        if self._bool("enable_cache", True) and target_path.is_file():
+            try:
+                if target_path.stat().st_size > 0:
+                    target_path.touch()
+                    return True
+                target_path.unlink(missing_ok=True)
+            except OSError as exc:
+                self._debug("plot cache validation failed path=%s error=%s", target_path, exc)
         return False
 
     def _cache_key(self, *parts: Any) -> str:
-        raw = repr(parts).encode("utf-8", errors="replace")
+        raw = repr((PLOT_CACHE_VERSION, self._cache_config_signature(), parts)).encode("utf-8", errors="replace")
         return hashlib.sha256(raw).hexdigest()[:20]
+
+    def _cache_config_signature(self) -> tuple[Any, ...]:
+        keys = (
+            "plot_dpi",
+            "plot_figure_width_in",
+            "plot_figure_height_in",
+            "plot_polar_figure_size_in",
+            "plot_line_width",
+            "plot_grid_alpha",
+            "plot_primary_color",
+            "plot_palette",
+            "plot_parametric_color",
+            "plot_polar_color",
+            "plot_3d_cmap",
+            "plot_3d_alpha",
+            "plot_3d_elev",
+            "plot_3d_azim",
+            "plot_3d_parametric_cmap",
+            "plot_3d_contour_projection",
+            "plot_implicit_show_aux_contours",
+            "plot_vector_field_cmap",
+            "plot_vector_field_normalize",
+            "plot_vector_field_scale",
+            "plot_vector_field_width",
+            "plot_font_family",
+            "plot_sample_points",
+            "plot_parametric_sample_points",
+            "plot_implicit_grid_density",
+            "plot_implicit_3d_grid_density",
+            "plot_implicit_3d_slices",
+            "plot_3d_grid_density",
+            "plot_vector_field_density",
+            "plot_max_functions",
+            "plot_3d_max_surfaces",
+            "plot_max_vectors",
+            "plot_default_x_range",
+            "plot_default_implicit_range",
+            "plot_default_3d_range",
+            "plot_default_implicit_3d_range",
+            "plot_default_spherical_theta_range",
+            "plot_default_spherical_phi_range",
+            "plot_default_theta_range",
+            "plot_default_t_range",
+            "plot_default_3d_t_range",
+            "plot_default_vector_range",
+            "plot_max_expression_length",
+            "plot_max_expression_ops",
+            "plot_max_power",
+            "plot_max_range_span",
+        )
+        return tuple((key, get_config_value(self._config, key, None)) for key in keys)
+
+    def _trim_cache(self, protected: Path | None = None) -> None:
+        """Apply a bounded LRU-like policy to plot PNGs after each render."""
+
+        max_files = self._bounded_int(
+            "plot_cache_max_files",
+            PLOT_DEFAULT_CACHE_MAX_FILES,
+            1,
+            500,
+        )
+        max_bytes = int(
+            self._bounded_float(
+                "plot_cache_max_bytes",
+                PLOT_DEFAULT_CACHE_MAX_MB * 1024 * 1024,
+                1 * 1024 * 1024,
+                10 * 1024 * 1024 * 1024,
+            )
+        )
+        files = [path for path in self._temp_dir.glob("plot_*.png") if path.is_file()]
+        files.sort(key=lambda path: path.stat().st_mtime)
+        total_bytes = sum(path.stat().st_size for path in files)
+        while files and (len(files) > max_files or total_bytes > max_bytes):
+            candidate = files.pop(0)
+            if protected is not None and candidate == protected:
+                files.append(candidate)
+                if all(item == protected for item in files):
+                    break
+                continue
+            try:
+                size = candidate.stat().st_size
+                candidate.unlink(missing_ok=True)
+                total_bytes -= size
+            except FileNotFoundError:
+                continue
+            except OSError as exc:
+                self._debug("plot cache eviction failed path=%s error=%s", candidate, exc)
+
+    def release(self) -> None:
+        """Release pyplot figures when the plugin is unloaded."""
+
+        if not _BACKEND_READY or plt is None:
+            return
+        with MATPLOTLIB_RENDER_LOCK:
+            plt.close("all")
+
+    def _bounded_int(self, key: str, default: int, minimum: int, maximum: int) -> int:
+        value = self._int(key, default)
+        return min(max(value, minimum), maximum)
+
+    def _bounded_float(self, key: str, default: float, minimum: float, maximum: float) -> float:
+        value = self._float(key, default)
+        if not math.isfinite(value):
+            value = default
+        return min(max(value, minimum), maximum)
 
     def _plot_colors(self) -> list[str]:
         raw = self._text("plot_palette", "")

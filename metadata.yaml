@@ -1,8 +1,8 @@
 name: astrbot_plugin_math_render
 display_name: Math Render
-desc: 提供 LaTeX 公式渲染、数学解答出图、Markdown 数学卡片与几何示意图能力。
-short_desc: 高质量数学公式、解答图卡与几何图渲染插件。
-version: v0.4.13
+desc: 提供 LaTeX 公式渲染、数学解答图卡、几何示意图及二维/三维函数绘图能力。
+short_desc: 高质量数学公式、解答图卡、几何图与函数绘图插件。
+version: v0.5.0
 author: Huli3
 repo: https://github.com/Whereis-Alice/astrbot_plugin_math_render
 astrbot_version: ">=4.16,<5"

@@ -3,3 +3,4 @@ __pycache__/
 .tmp/
 data/
 .codex_backups/
+dist/
